@@ -1359,6 +1359,17 @@ _PORT_BINDING_PLATFORM_VALUES = frozenset({
 })
 
 
+def _secondary_platform_requires_default_listener(platform, platform_config) -> bool:
+    """Return True when a secondary profile adapter would bind local ports."""
+    if platform.value not in _PORT_BINDING_PLATFORM_VALUES:
+        return False
+    if platform.value == "feishu":
+        extra = getattr(platform_config, "extra", None) or {}
+        connection_mode = str(extra.get("connection_mode") or "websocket").strip().lower()
+        return connection_mode != "websocket"
+    return True
+
+
 class MultiplexConfigError(RuntimeError):
     """A profile multiplexer config is invalid (fail-fast at startup).
 
@@ -7648,7 +7659,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # default profile's listener already serves every profile via the
             # /p/<profile>/ prefix, so a second bind can only collide. This is a
             # config error, not a transient failure — fail fast and loud.
-            if platform.value in _PORT_BINDING_PLATFORM_VALUES:
+            if _secondary_platform_requires_default_listener(platform, platform_config):
                 raise MultiplexConfigError(
                     f"Profile '{profile_name}' enables the port-binding platform "
                     f"'{platform.value}', but gateway.multiplex_profiles is on. The "
