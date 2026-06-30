@@ -9,6 +9,9 @@ on:
       - Dockerfile
       - pyproject.toml
       - uv.lock
+      - gateway/**
+      - plugins/**
+      - tests/gateway/**
       - .github/workflows/duoduo-docker.yml
 
 permissions:
