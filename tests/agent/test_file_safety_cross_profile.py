@@ -120,6 +120,12 @@ class TestClassifyCrossProfileTarget:
         )
         assert result is None
 
+    def test_same_profile_env_write_returns_none(self, fake_hermes, monkeypatch):
+        _set_active_home(monkeypatch, fake_hermes["security_home"])
+        from agent.file_safety import classify_cross_profile_target
+        result = classify_cross_profile_target(str(fake_hermes["security_home"] / ".env"))
+        assert result is None
+
     def test_security_writing_default_skill(self, fake_hermes, monkeypatch):
         """The exact incident from May 2026."""
         _set_active_home(monkeypatch, fake_hermes["security_home"])
@@ -143,6 +149,15 @@ class TestClassifyCrossProfileTarget:
         assert result["active_profile"] == "default"
         assert result["target_profile"] == "hermes-security"
 
+    def test_default_writing_security_env(self, fake_hermes, monkeypatch):
+        _set_active_home(monkeypatch, fake_hermes["default_home"])
+        from agent.file_safety import classify_cross_profile_target
+        result = classify_cross_profile_target(str(fake_hermes["security_home"] / ".env"))
+        assert result is not None
+        assert result["active_profile"] == "default"
+        assert result["target_profile"] == "hermes-security"
+        assert result["area"] == ".env"
+
     def test_named_to_named_cross_profile(self, fake_hermes, monkeypatch):
         _set_active_home(monkeypatch, fake_hermes["security_home"])
         from agent.file_safety import classify_cross_profile_target
@@ -151,6 +166,15 @@ class TestClassifyCrossProfileTarget:
         )
         assert result is not None
         assert result["target_profile"] == "coder"
+
+    def test_named_to_named_cross_profile_env(self, fake_hermes, monkeypatch):
+        _set_active_home(monkeypatch, fake_hermes["security_home"])
+        from agent.file_safety import classify_cross_profile_target
+        result = classify_cross_profile_target(str(fake_hermes["coder_home"] / ".env"))
+        assert result is not None
+        assert result["active_profile"] == "hermes-security"
+        assert result["target_profile"] == "coder"
+        assert result["area"] == ".env"
 
     @pytest.mark.parametrize("area", ["skills", "plugins", "cron", "memories"])
     def test_all_profile_scoped_areas_classified(self, fake_hermes, monkeypatch, area):
@@ -168,8 +192,7 @@ class TestClassifyCrossProfileTarget:
         assert classify_cross_profile_target(str(tmp_path / "random.txt")) is None
 
     def test_hermes_config_not_classified_as_cross_profile(self, fake_hermes, monkeypatch):
-        """Files under <root>/config.yaml or <root>/.env are NOT profile-scoped
-        (already covered by build_write_denied_paths). Don't double-warn."""
+        """Files under <root>/config.yaml are not profile-scoped."""
         _set_active_home(monkeypatch, fake_hermes["security_home"])
         from agent.file_safety import classify_cross_profile_target
         # config.yaml at root level is not in PROFILE_SCOPED_AREAS
@@ -177,6 +200,15 @@ class TestClassifyCrossProfileTarget:
             str(fake_hermes["default_home"] / "config.yaml")
         )
         assert result is None
+
+    def test_named_profile_writing_root_env_is_cross_profile(self, fake_hermes, monkeypatch):
+        _set_active_home(monkeypatch, fake_hermes["security_home"])
+        from agent.file_safety import classify_cross_profile_target
+        result = classify_cross_profile_target(str(fake_hermes["default_home"] / ".env"))
+        assert result is not None
+        assert result["active_profile"] == "hermes-security"
+        assert result["target_profile"] == "default"
+        assert result["area"] == ".env"
 
 
 # ---------------------------------------------------------------------------
