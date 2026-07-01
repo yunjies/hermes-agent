@@ -517,6 +517,71 @@ def _migrate_profile_config_if_outdated(profile_dir: Path) -> None:
         pass
 
 
+def _ensure_profile_skill_external_dirs(profile_dir: Path) -> None:
+    """Ensure new profiles load their private skills and shared governance skills.
+
+    Cloned configs can carry ``skills.external_dirs`` from the source profile.
+    That makes the new profile see another profile's private skills. Normalize
+    those entries at creation time, then add the small shared governance skill
+    pool used for profile delegation/routing.
+    """
+    config_path = profile_dir / "config.yaml"
+    shared_skills = profile_dir.parent.parent / "shared-skills"
+    desired = [str(profile_dir / "skills")]
+    if shared_skills.is_dir():
+        desired.append(str(shared_skills))
+
+    try:
+        import yaml
+    except Exception:
+        return
+
+    data = {}
+    if config_path.exists():
+        try:
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return
+
+    skills = data.setdefault("skills", {})
+    dirs = skills.get("external_dirs") or []
+    if not isinstance(dirs, list):
+        dirs = []
+
+    profiles_root = profile_dir.parent.resolve()
+    current_skills = (profile_dir / "skills").resolve()
+    normalized = []
+    for item in dirs:
+        text = str(item)
+        try:
+            resolved = Path(os.path.expanduser(text)).resolve()
+        except Exception:
+            resolved = None
+        if resolved is not None:
+            try:
+                rel = resolved.relative_to(profiles_root)
+            except ValueError:
+                pass
+            else:
+                if len(rel.parts) >= 2 and rel.parts[1] == "skills" and resolved != current_skills:
+                    continue
+        if text not in normalized:
+            normalized.append(text)
+
+    for item in desired:
+        if item not in normalized:
+            normalized.append(item)
+
+    skills["external_dirs"] = normalized
+    try:
+        config_path.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+    except Exception:
+        return
+
+
 def find_alias_for_profile(profile_name: str) -> Optional[str]:
     """Return the alias name of the wrapper that activates *profile_name*, or None.
 
@@ -1135,6 +1200,7 @@ def create_profile(
     # explicit runtime/history stripping above.
     if not clone_all:
         _migrate_profile_config_if_outdated(profile_dir)
+        _ensure_profile_skill_external_dirs(profile_dir)
 
     # Persist description if the caller provided one. Done last so a
     # partial-create failure doesn't strand a description file in an
