@@ -8707,9 +8707,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 return self._telegram_topic_root_new_message()
             async def _do_reset():
                 return await self._handle_reset_command(event)
+            raw_command = (command or "new").strip().lower().lstrip("/")
             return await self._maybe_confirm_destructive_slash(
                 event=event,
-                command="new",
+                command=raw_command if raw_command in {"new", "reset"} else "new",
                 title="/new",
                 detail=(
                     "This starts a fresh session and discards the current "
@@ -12806,6 +12807,23 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             approvals = cfg.get("approvals") if isinstance(cfg, dict) else None
             if isinstance(approvals, dict):
                 confirm_required = bool(approvals.get("destructive_slash_confirm", True))
+                exempt_raw = approvals.get("destructive_slash_confirm_exempt_commands", [])
+                if isinstance(exempt_raw, str):
+                    exempt_commands = {
+                        item.strip().lower().lstrip("/")
+                        for item in re.split(r"[\s,;]+", exempt_raw)
+                        if item.strip()
+                    }
+                elif isinstance(exempt_raw, (list, tuple, set)):
+                    exempt_commands = {
+                        str(item).strip().lower().lstrip("/")
+                        for item in exempt_raw
+                        if str(item).strip()
+                    }
+                else:
+                    exempt_commands = set()
+                if command.strip().lower().lstrip("/") in exempt_commands:
+                    confirm_required = False
         except Exception:
             pass
 
