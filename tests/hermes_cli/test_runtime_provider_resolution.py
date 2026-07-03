@@ -3303,3 +3303,9 @@ def test_codex_quota_router_allowlisted_profile_overrides_config_provider(monkey
     assert resolved["provider"] == "openai-codex"
     assert resolved["model"] == "gpt-5.5"
     assert resolved["codex_quota_route"] is route
+
+    resolved_auto = rp.resolve_runtime_provider(requested="auto")
+
+    assert resolved_auto["provider"] == "openai-codex"
+    assert resolved_auto["model"] == "gpt-5.5"
+    assert resolved_auto["codex_quota_route"] is route

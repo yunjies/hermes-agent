@@ -1498,7 +1498,9 @@ def resolve_runtime_provider(
     codex_quota_route = None
     requested_provider, codex_quota_route = _resolve_codex_quota_route_for_auto(
         requested_provider=requested_provider,
-        explicit_requested_provider=bool(requested and requested.strip()),
+        explicit_requested_provider=bool(
+            requested and requested.strip() and requested.strip().lower() != "auto"
+        ),
         explicit_api_key=explicit_api_key,
         explicit_base_url=explicit_base_url,
         target_model=target_model,
