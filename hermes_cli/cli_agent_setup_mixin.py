@@ -133,9 +133,13 @@ class CLIAgentSetupMixin:
         # (e.g. "my-provider") as the model string to the API instead of
         # the configured model (e.g. "qwen3.6-plus"), causing 400 errors.
         runtime_model = runtime.get("model")
+        runtime_model_from_quota_route = runtime.get("codex_quota_route") is not None
         if runtime_model and isinstance(runtime_model, str):
-            # Only use runtime model if: model is unset, or model equals provider name
+            # Quota routing is a new-session decision and should override the
+            # configured default without mutating config.yaml. Other runtime
+            # model hints keep the historical narrow override behavior.
             should_use_runtime_model = (
+                runtime_model_from_quota_route or
                 not self.model or  # No model configured yet
                 self.model == self.provider or  # Model is the provider slug
                 self.model == runtime.get("name")  # Model matches provider display name

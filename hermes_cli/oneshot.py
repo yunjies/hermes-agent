@@ -321,9 +321,12 @@ def _run_agent(
 
     runtime = resolve_runtime_provider(
         requested=effective_provider,
-        target_model=effective_model or None,
+        target_model=(effective_model or None) if (model or env_model) else None,
         explicit_base_url=explicit_base_url_from_alias,
     )
+    runtime_model = runtime.get("model")
+    if runtime_model and isinstance(runtime_model, str):
+        effective_model = runtime_model
 
     # Pull in explicit toolsets when provided; otherwise use whatever the user
     # has enabled for "cli". sorted() gives stable ordering for config-derived

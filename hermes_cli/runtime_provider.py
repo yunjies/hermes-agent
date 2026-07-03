@@ -496,6 +496,52 @@ def resolve_requested_provider(requested: Optional[str] = None) -> str:
     return "auto"
 
 
+def _resolve_codex_quota_route_for_auto(
+    *,
+    requested_provider: str,
+    explicit_api_key: Optional[str],
+    explicit_base_url: Optional[str],
+    target_model: Optional[str],
+) -> tuple[str, Optional[Any]]:
+    """Route only fresh auto-provider sessions through the Codex quota router."""
+    if requested_provider != "auto":
+        return requested_provider, None
+    if explicit_api_key or explicit_base_url or target_model:
+        return requested_provider, None
+    try:
+        from agent.codex_quota_router import (
+            is_codex_quota_router_enabled_for_current_profile,
+            resolve_codex_quota_routed_provider,
+        )
+
+        if not is_codex_quota_router_enabled_for_current_profile():
+            logger.info("Codex quota routing skipped: current profile is not allowlisted")
+            return requested_provider, None
+
+        route = resolve_codex_quota_routed_provider()
+        logger.info(
+            "Codex quota routing selected %s/%s fallback=%s used_percent=%s error=%s",
+            route.provider,
+            route.model,
+            route.fallback,
+            route.used_percent,
+            route.error,
+        )
+        return route.provider, route
+    except Exception as exc:
+        logger.warning("Codex quota routing failed closed to deepseek/deepseek-v4-flash: %s", exc)
+
+        class _FallbackRoute:
+            provider = os.environ.get("HERMES_CODEX_ROUTING_FALLBACK_PROVIDER", "").strip() or "deepseek"
+            model = os.environ.get("HERMES_CODEX_ROUTING_FALLBACK_MODEL", "").strip() or "deepseek-v4-flash"
+            codex_available = False
+            fallback = True
+            error = str(exc)
+            used_percent = None
+
+        return _FallbackRoute.provider, _FallbackRoute()
+
+
 def _try_resolve_from_custom_pool(
     base_url: str,
     provider_label: str,
@@ -1443,6 +1489,13 @@ def resolve_runtime_provider(
     behavior (api_mode derived from config).
     """
     requested_provider = resolve_requested_provider(requested)
+    codex_quota_route = None
+    requested_provider, codex_quota_route = _resolve_codex_quota_route_for_auto(
+        requested_provider=requested_provider,
+        explicit_api_key=explicit_api_key,
+        explicit_base_url=explicit_base_url,
+        target_model=target_model,
+    )
 
     if requested_provider == "moa":
         return {
@@ -1618,7 +1671,7 @@ def resolve_runtime_provider(
                     logger.debug("Nous pool entry agent_key still unavailable, falling through to runtime resolution")
                     pool_api_key = ""
         if entry is not None and pool_api_key:
-            return _resolve_runtime_from_pool_entry(
+            runtime = _resolve_runtime_from_pool_entry(
                 provider=provider,
                 entry=entry,
                 requested_provider=requested_provider,
@@ -1626,6 +1679,10 @@ def resolve_runtime_provider(
                 pool=pool,
                 target_model=target_model,
             )
+            if codex_quota_route is not None:
+                runtime["codex_quota_route"] = codex_quota_route
+                runtime["model"] = codex_quota_route.model
+            return runtime
 
     if provider == "nous":
         try:
@@ -1652,7 +1709,7 @@ def resolve_runtime_provider(
     if provider == "openai-codex":
         try:
             creds = resolve_codex_runtime_credentials()
-            return {
+            runtime = {
                 "provider": "openai-codex",
                 "api_mode": "codex_responses",
                 "base_url": creds.get("base_url", "").rstrip("/"),
@@ -1661,6 +1718,10 @@ def resolve_runtime_provider(
                 "last_refresh": creds.get("last_refresh"),
                 "requested_provider": requested_provider,
             }
+            if codex_quota_route is not None:
+                runtime["codex_quota_route"] = codex_quota_route
+                runtime["model"] = codex_quota_route.model
+            return runtime
         except AuthError:
             if requested_provider != "auto":
                 raise
@@ -1919,7 +1980,7 @@ def resolve_runtime_provider(
             base_url = re.sub(r"/v1/?$", "", base_url)
         if provider == "lmstudio":
             base_url = auth_mod._normalize_lmstudio_runtime_base_url(base_url)
-        return {
+        runtime = {
             "provider": provider,
             "api_mode": api_mode,
             "base_url": base_url,
@@ -1927,6 +1988,10 @@ def resolve_runtime_provider(
             "source": creds.get("source", "env"),
             "requested_provider": requested_provider,
         }
+        if codex_quota_route is not None:
+            runtime["codex_quota_route"] = codex_quota_route
+            runtime["model"] = codex_quota_route.model
+        return runtime
 
     runtime = _resolve_openrouter_runtime(
         requested_provider=requested_provider,
@@ -1934,6 +1999,9 @@ def resolve_runtime_provider(
         explicit_base_url=explicit_base_url,
     )
     runtime["requested_provider"] = requested_provider
+    if codex_quota_route is not None:
+        runtime["codex_quota_route"] = codex_quota_route
+        runtime["model"] = codex_quota_route.model
     return runtime
 
 

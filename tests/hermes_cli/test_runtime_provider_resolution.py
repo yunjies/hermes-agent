@@ -1,6 +1,7 @@
 import base64
 import json
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -3080,3 +3081,187 @@ def test_auto_provider_lookalike_cloud_host_does_not_bypass_to_cloud(monkeypatch
         f"Look-alike host must not be classified as Anthropic cloud: {resolved}"
     )
     assert resolved["base_url"] == lookalike
+
+
+def test_codex_quota_router_routes_auto_to_fallback(monkeypatch):
+    route = SimpleNamespace(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        codex_available=False,
+        fallback=True,
+        error=None,
+        used_percent=95.0,
+    )
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {"provider": "auto", "default": "configured-model"},
+    )
+    monkeypatch.setattr(rp, "load_pool", lambda provider: None)
+    monkeypatch.setattr(
+        "agent.codex_quota_router.resolve_codex_quota_routed_provider",
+        lambda: route,
+    )
+    monkeypatch.setattr(
+        rp,
+        "resolve_api_key_provider_credentials",
+        lambda provider: {
+            "api_key": "test-key",
+            "base_url": "https://api.deepseek.com/v1",
+            "source": "test",
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider()
+
+    assert resolved["provider"] == "deepseek"
+    assert resolved["model"] == "deepseek-v4-flash"
+    assert resolved["codex_quota_route"] is route
+
+
+def test_codex_quota_router_routes_auto_to_codex(monkeypatch):
+    route = SimpleNamespace(
+        provider="openai-codex",
+        model="gpt-5.5",
+        codex_available=True,
+        fallback=False,
+        error=None,
+        used_percent=12.0,
+    )
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {"provider": "auto", "default": "configured-model"},
+    )
+    monkeypatch.setattr(rp, "load_pool", lambda provider: None)
+    monkeypatch.setattr(
+        "agent.codex_quota_router.resolve_codex_quota_routed_provider",
+        lambda: route,
+    )
+    monkeypatch.setattr(
+        rp,
+        "resolve_codex_runtime_credentials",
+        lambda: {
+            "api_key": "codex-token",
+            "base_url": "https://chatgpt.com/backend-api/codex",
+            "source": "test",
+            "last_refresh": "now",
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider()
+
+    assert resolved["provider"] == "openai-codex"
+    assert resolved["model"] == "gpt-5.5"
+    assert resolved["codex_quota_route"] is route
+
+
+def test_codex_quota_router_does_not_route_explicit_or_target_model(monkeypatch):
+    called = False
+
+    def _route():
+        nonlocal called
+        called = True
+        return SimpleNamespace(provider="deepseek", model="deepseek-v4-flash")
+
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {"provider": "auto", "default": "configured-model"},
+    )
+    monkeypatch.setattr(rp, "load_pool", lambda provider: None)
+    monkeypatch.setattr(
+        "agent.codex_quota_router.resolve_codex_quota_routed_provider",
+        _route,
+    )
+    monkeypatch.setattr(
+        rp,
+        "resolve_codex_runtime_credentials",
+        lambda: {
+            "api_key": "codex-token",
+            "base_url": "https://chatgpt.com/backend-api/codex",
+            "source": "test",
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider(requested="openai-codex", target_model="gpt-5.5")
+
+    assert resolved["provider"] == "openai-codex"
+    assert "codex_quota_route" not in resolved
+    assert called is False
+
+
+def test_codex_quota_router_allowlist_blocks_unlisted_auto_profile(monkeypatch):
+    called = False
+
+    def _route():
+        nonlocal called
+        called = True
+        return SimpleNamespace(provider="deepseek", model="deepseek-v4-flash")
+
+    monkeypatch.setenv("HERMES_CODEX_ROUTER_ENABLED_PROFILES", "framework-maintainer")
+    monkeypatch.setenv("HERMES_PROFILE", "home-media")
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {"provider": "auto", "default": "configured-model"},
+    )
+    monkeypatch.setattr(rp, "resolve_provider", lambda *args, **kwargs: "deepseek")
+    monkeypatch.setattr(rp, "load_pool", lambda provider: None)
+    monkeypatch.setattr(
+        "agent.codex_quota_router.resolve_codex_quota_routed_provider",
+        _route,
+    )
+    monkeypatch.setattr(
+        rp,
+        "resolve_api_key_provider_credentials",
+        lambda provider: {
+            "api_key": "test-key",
+            "base_url": "https://api.deepseek.com/v1",
+            "source": "test",
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider(requested="auto")
+
+    assert resolved["provider"] == "deepseek"
+    assert "codex_quota_route" not in resolved
+    assert called is False
+
+
+def test_codex_quota_router_allowlist_allows_listed_profile(monkeypatch):
+    route = SimpleNamespace(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        codex_available=False,
+        fallback=True,
+        error=None,
+        used_percent=95.0,
+    )
+    monkeypatch.setenv("HERMES_CODEX_ROUTER_ENABLED_PROFILES", "framework-maintainer")
+    monkeypatch.setenv("HERMES_PROFILE", "framework-maintainer")
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {"provider": "auto", "default": "configured-model"},
+    )
+    monkeypatch.setattr(rp, "load_pool", lambda provider: None)
+    monkeypatch.setattr(
+        "agent.codex_quota_router.resolve_codex_quota_routed_provider",
+        lambda: route,
+    )
+    monkeypatch.setattr(
+        rp,
+        "resolve_api_key_provider_credentials",
+        lambda provider: {
+            "api_key": "test-key",
+            "base_url": "https://api.deepseek.com/v1",
+            "source": "test",
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider()
+
+    assert resolved["provider"] == "deepseek"
+    assert resolved["model"] == "deepseek-v4-flash"
+    assert resolved["codex_quota_route"] is route
