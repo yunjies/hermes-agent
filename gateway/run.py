@@ -1779,6 +1779,7 @@ def _resolve_runtime_agent_kwargs() -> dict:
         "args": list(runtime.get("args") or []),
         "credential_pool": runtime.get("credential_pool"),
         "max_tokens": max_tokens,
+        "model": runtime.get("model"),
     }
 
 
@@ -11097,6 +11098,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Resolve runtime credentials for probing
         try:
             runtime = _resolve_runtime_agent_kwargs()
+            runtime_model = runtime.get("model")
+            if runtime_model and isinstance(runtime_model, str):
+                model = runtime_model
             provider = provider or runtime.get("provider")
             base_url = base_url or runtime.get("base_url")
             api_key = runtime.get("api_key")
