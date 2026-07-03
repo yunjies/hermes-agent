@@ -499,12 +499,13 @@ def resolve_requested_provider(requested: Optional[str] = None) -> str:
 def _resolve_codex_quota_route_for_auto(
     *,
     requested_provider: str,
+    explicit_requested_provider: bool,
     explicit_api_key: Optional[str],
     explicit_base_url: Optional[str],
     target_model: Optional[str],
 ) -> tuple[str, Optional[Any]]:
-    """Route only fresh auto-provider sessions through the Codex quota router."""
-    if requested_provider != "auto":
+    """Route fresh allowlisted sessions through the Codex quota router."""
+    if explicit_requested_provider:
         return requested_provider, None
     if explicit_api_key or explicit_base_url or target_model:
         return requested_provider, None
@@ -518,6 +519,11 @@ def _resolve_codex_quota_route_for_auto(
             logger.info("Codex quota routing skipped: current profile is not allowlisted")
             return requested_provider, None
 
+        if requested_provider != "auto":
+            logger.info(
+                "Codex quota routing overriding configured provider %s for allowlisted profile",
+                requested_provider,
+            )
         route = resolve_codex_quota_routed_provider()
         logger.info(
             "Codex quota routing selected %s/%s fallback=%s used_percent=%s error=%s",
@@ -1492,6 +1498,7 @@ def resolve_runtime_provider(
     codex_quota_route = None
     requested_provider, codex_quota_route = _resolve_codex_quota_route_for_auto(
         requested_provider=requested_provider,
+        explicit_requested_provider=bool(requested and requested.strip()),
         explicit_api_key=explicit_api_key,
         explicit_base_url=explicit_base_url,
         target_model=target_model,

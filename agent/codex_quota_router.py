@@ -19,8 +19,8 @@ Configuration is via environment variables:
     ``deepseek-v4-flash``.
 ``HERMES_CODEX_ROUTER_ENABLED_PROFILES``
     Optional comma-separated profile allowlist. Empty, ``*``, or ``all`` means
-    every ``provider=auto`` profile may route. When set, only listed profiles
-    use the router.
+    every fresh session without an explicit provider may route. When set, only
+    listed profiles use the router.
 """
 
 from __future__ import annotations
@@ -131,26 +131,28 @@ def _resolve_codex_wham_url(base_url: str) -> str:
 
 
 def _has_codex_credentials() -> bool:
-    try:
-        from hermes_cli.auth import _read_codex_tokens
-
-        data = _read_codex_tokens(lazy=True)
-        tokens = data.get("tokens") if isinstance(data, dict) else None
-        if not isinstance(tokens, dict):
-            return False
-        return bool(str(tokens.get("access_token", "") or "").strip())
-    except Exception:
-        return False
+    return bool(_fetch_codex_access_token())
 
 
 def _fetch_codex_access_token() -> Optional[str]:
+    def _pool_token() -> Optional[str]:
+        try:
+            from hermes_cli.auth import _pool_codex_access_token
+
+            return str(_pool_codex_access_token() or "").strip() or None
+        except Exception:
+            return None
+
     try:
         from hermes_cli.auth import resolve_codex_runtime_credentials
 
         creds = resolve_codex_runtime_credentials(refresh_if_expiring=True)
-        return str(creds.get("api_key", "") or "").strip() or None
+        token = str(creds.get("api_key", "") or "").strip()
+        if token:
+            return token
     except Exception:
-        return None
+        pass
+    return _pool_token()
 
 
 def check_codex_quota() -> Optional[float]:
@@ -162,7 +164,10 @@ def check_codex_quota() -> Optional[float]:
     try:
         from hermes_cli.auth import _read_codex_tokens
 
-        token_data = _read_codex_tokens(lazy=True)
+        try:
+            token_data = _read_codex_tokens(lazy=True)
+        except TypeError:
+            token_data = _read_codex_tokens()
         tokens = token_data.get("tokens") or {}
         account_id = str(tokens.get("account_id", "") or "").strip()
         base_url = os.environ.get("HERMES_CODEX_BASE_URL", "").strip() or _CODEX_BASE_URL

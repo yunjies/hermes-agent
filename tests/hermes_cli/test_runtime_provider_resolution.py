@@ -3265,3 +3265,41 @@ def test_codex_quota_router_allowlist_allows_listed_profile(monkeypatch):
     assert resolved["provider"] == "deepseek"
     assert resolved["model"] == "deepseek-v4-flash"
     assert resolved["codex_quota_route"] is route
+
+
+def test_codex_quota_router_allowlisted_profile_overrides_config_provider(monkeypatch):
+    route = SimpleNamespace(
+        provider="openai-codex",
+        model="gpt-5.5",
+        codex_available=True,
+        fallback=False,
+        error=None,
+        used_percent=12.0,
+    )
+    monkeypatch.setenv("HERMES_CODEX_ROUTER_ENABLED_PROFILES", "mind-palace")
+    monkeypatch.setenv("HERMES_PROFILE", "mind-palace")
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {"provider": "deepseek", "default": "deepseek-v4-flash"},
+    )
+    monkeypatch.setattr(rp, "load_pool", lambda provider: None)
+    monkeypatch.setattr(
+        "agent.codex_quota_router.resolve_codex_quota_routed_provider",
+        lambda: route,
+    )
+    monkeypatch.setattr(
+        rp,
+        "resolve_codex_runtime_credentials",
+        lambda: {
+            "api_key": "codex-token",
+            "base_url": "https://chatgpt.com/backend-api/codex",
+            "source": "test",
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider()
+
+    assert resolved["provider"] == "openai-codex"
+    assert resolved["model"] == "gpt-5.5"
+    assert resolved["codex_quota_route"] is route
