@@ -548,6 +548,18 @@ def _resolve_codex_quota_route_for_auto(
         return _FallbackRoute.provider, _FallbackRoute()
 
 
+def _apply_codex_quota_route(runtime: Dict[str, Any], route: Any) -> Dict[str, Any]:
+    runtime["codex_quota_route"] = route
+    runtime["model"] = route.model
+    if route.provider == "openai-codex":
+        # Quota routing is based on Hermes-managed Codex OAuth credentials.
+        # Do not inherit a profile-level codex_app_server opt-in here: that
+        # runtime uses a separate Codex CLI login store and can fail even when
+        # the routed OAuth token is valid.
+        runtime["api_mode"] = "codex_responses"
+    return runtime
+
+
 def _try_resolve_from_custom_pool(
     base_url: str,
     provider_label: str,
@@ -1689,8 +1701,7 @@ def resolve_runtime_provider(
                 target_model=target_model,
             )
             if codex_quota_route is not None:
-                runtime["codex_quota_route"] = codex_quota_route
-                runtime["model"] = codex_quota_route.model
+                runtime = _apply_codex_quota_route(runtime, codex_quota_route)
             return runtime
 
     if provider == "nous":
@@ -1728,8 +1739,7 @@ def resolve_runtime_provider(
                 "requested_provider": requested_provider,
             }
             if codex_quota_route is not None:
-                runtime["codex_quota_route"] = codex_quota_route
-                runtime["model"] = codex_quota_route.model
+                runtime = _apply_codex_quota_route(runtime, codex_quota_route)
             return runtime
         except AuthError:
             if requested_provider != "auto":
@@ -1998,8 +2008,7 @@ def resolve_runtime_provider(
             "requested_provider": requested_provider,
         }
         if codex_quota_route is not None:
-            runtime["codex_quota_route"] = codex_quota_route
-            runtime["model"] = codex_quota_route.model
+            runtime = _apply_codex_quota_route(runtime, codex_quota_route)
         return runtime
 
     runtime = _resolve_openrouter_runtime(
@@ -2009,8 +2018,7 @@ def resolve_runtime_provider(
     )
     runtime["requested_provider"] = requested_provider
     if codex_quota_route is not None:
-        runtime["codex_quota_route"] = codex_quota_route
-        runtime["model"] = codex_quota_route.model
+        runtime = _apply_codex_quota_route(runtime, codex_quota_route)
     return runtime
 
 

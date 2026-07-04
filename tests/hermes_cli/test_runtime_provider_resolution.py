@@ -3309,3 +3309,50 @@ def test_codex_quota_router_allowlisted_profile_overrides_config_provider(monkey
     assert resolved_auto["provider"] == "openai-codex"
     assert resolved_auto["model"] == "gpt-5.5"
     assert resolved_auto["codex_quota_route"] is route
+
+
+def test_codex_quota_router_does_not_inherit_codex_app_server_runtime(monkeypatch):
+    route = SimpleNamespace(
+        provider="openai-codex",
+        model="gpt-5.5",
+        codex_available=True,
+        fallback=False,
+        error=None,
+        used_percent=12.0,
+    )
+
+    class _Entry:
+        access_token = "codex-token"
+        source = "device_code"
+        base_url = "https://chatgpt.com/backend-api/codex"
+
+    class _Pool:
+        def has_credentials(self):
+            return True
+
+        def select(self):
+            return _Entry()
+
+    monkeypatch.setenv("HERMES_CODEX_ROUTER_ENABLED_PROFILES", "mind-palace")
+    monkeypatch.setenv("HERMES_PROFILE", "mind-palace")
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {
+            "provider": "deepseek",
+            "default": "deepseek-v4-flash",
+            "openai_runtime": "codex_app_server",
+        },
+    )
+    monkeypatch.setattr(rp, "load_pool", lambda provider: _Pool())
+    monkeypatch.setattr(
+        "agent.codex_quota_router.resolve_codex_quota_routed_provider",
+        lambda: route,
+    )
+
+    resolved = rp.resolve_runtime_provider()
+
+    assert resolved["provider"] == "openai-codex"
+    assert resolved["model"] == "gpt-5.5"
+    assert resolved["api_mode"] == "codex_responses"
+    assert resolved["codex_quota_route"] is route
