@@ -1534,8 +1534,33 @@ class CLICommandsMixin:
                    "Use: pending, approve <id>, reject <id>, approval <on|off>.")
         print(out)
 
+    def _handle_methodology_distillation_command(self, cmd: str):
+        """Handle /distill slash command - review methodology context."""
+        from hermes_cli.write_approval_commands import handle_pending_subcommand
+        from tools import write_approval as wa
+
+        parts = cmd.strip().split()
+        args = parts[1:] if len(parts) > 1 else []
+        if args and args[0].lower() == "history":
+            from agent.methodology_distillation import run_history_distillation_from_args
+            print(run_history_distillation_from_args(args[1:]))
+            return
+        out = handle_pending_subcommand(
+            wa.METHODOLOGY_DISTILLATION, args,
+            set_mode_fn=lambda enabled: self._save_write_approval("methodology_distillation", enabled),
+        )
+        if out is None:
+            out = ("Unknown /distill subcommand. Use: pending, approve <id>, "
+                   "reject <id>, diff <id>, approval <on|off>.")
+        if args and args[0].lower() in {"approve", "apply"} and getattr(self, "agent", None):
+            try:
+                self.agent._cached_system_prompt = None
+            except Exception:
+                pass
+        print(out)
+
     def _save_write_approval(self, subsystem: str, enabled: bool):
-        """Persist <subsystem>.write_approval to config (for /memory|/skills approval)."""
+        """Persist <subsystem>.write_approval to config."""
         from cli import save_config_value
         save_config_value(f"{subsystem}.write_approval", bool(enabled))
 
