@@ -3356,3 +3356,41 @@ def test_codex_quota_router_does_not_inherit_codex_app_server_runtime(monkeypatc
     assert resolved["model"] == "gpt-5.5"
     assert resolved["api_mode"] == "codex_responses"
     assert resolved["codex_quota_route"] is route
+
+
+def test_codex_quota_router_uses_modelctrl_active_slot(monkeypatch):
+    from agent.codex_quota_router import _get_config
+
+    monkeypatch.setenv("HERMES_MODELCTRL_ACTIVE_SLOT", "coding")
+    monkeypatch.setenv("HERMES_CODEX_ROUTING_PRIMARY_PROVIDER", "openai-codex")
+    monkeypatch.setenv("HERMES_CODEX_ROUTING_PRIMARY_MODEL", "gpt-5.4")
+    monkeypatch.setenv("HERMES_CODEX_ROUTING_FALLBACK_PROVIDER", "deepseek")
+    monkeypatch.setenv("HERMES_CODEX_ROUTING_FALLBACK_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("HERMES_MODELCTRL_CODING_PRIMARY_PROVIDER", "openai-codex")
+    monkeypatch.setenv("HERMES_MODELCTRL_CODING_PRIMARY_MODEL", "gpt-5.5")
+    monkeypatch.setenv("HERMES_MODELCTRL_CODING_FALLBACK_PROVIDER", "deepseek")
+    monkeypatch.setenv("HERMES_MODELCTRL_CODING_FALLBACK_MODEL", "deepseek-v4")
+
+    assert _get_config() == (
+        10,
+        "openai-codex",
+        "gpt-5.5",
+        "deepseek",
+        "deepseek-v4",
+    )
+
+
+def test_codex_quota_router_non_codex_primary_skips_quota(monkeypatch):
+    from agent.codex_quota_router import resolve_codex_quota_routed_provider
+
+    monkeypatch.setenv("HERMES_MODELCTRL_ACTIVE_SLOT", "secondary")
+    monkeypatch.setenv("HERMES_MODELCTRL_SECONDARY_PRIMARY_PROVIDER", "deepseek")
+    monkeypatch.setenv("HERMES_MODELCTRL_SECONDARY_PRIMARY_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("HERMES_MODELCTRL_SECONDARY_FALLBACK_PROVIDER", "openai-codex")
+    monkeypatch.setenv("HERMES_MODELCTRL_SECONDARY_FALLBACK_MODEL", "gpt-5.4")
+
+    result = resolve_codex_quota_routed_provider()
+
+    assert result.provider == "deepseek"
+    assert result.model == "deepseek-v4-flash"
+    assert result.fallback is False

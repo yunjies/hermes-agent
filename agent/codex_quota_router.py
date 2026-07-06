@@ -8,6 +8,9 @@ Configuration is via environment variables:
 
 ``HERMES_CODEX_QUOTA_THRESHOLD``
     Minimum remaining quota percent required to use the primary route.
+``HERMES_MODELCTRL_ACTIVE_SLOT``
+    Optional model-control slot name. When set, slot-specific variables such
+    as ``HERMES_MODELCTRL_CODING_PRIMARY_MODEL`` override the global route.
 ``HERMES_CODEX_ROUTING_PRIMARY_PROVIDER``
     Provider when Codex quota is sufficient. Defaults to ``openai-codex``.
 ``HERMES_CODEX_ROUTING_PRIMARY_MODEL``
@@ -27,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -41,6 +45,7 @@ _DEFAULT_PRIMARY_MODEL = "gpt-5.5"
 _DEFAULT_FALLBACK_PROVIDER = "deepseek"
 _DEFAULT_FALLBACK_MODEL = "deepseek-v4-flash"
 _CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
+_SLOT_RE = re.compile(r"[^A-Z0-9]+")
 
 
 @dataclass(frozen=True)
@@ -53,7 +58,24 @@ class QuotaRoutingResult:
     used_percent: Optional[float] = None
 
 
+def _slot_env_name(slot: str, suffix: str) -> str:
+    normalized = _SLOT_RE.sub("_", (slot or "").strip().upper()).strip("_")
+    if not normalized:
+        return ""
+    return f"HERMES_MODELCTRL_{normalized}_{suffix}"
+
+
+def _env_with_slot(slot: str, suffix: str, legacy_name: str) -> str:
+    slot_name = _slot_env_name(slot, suffix)
+    if slot_name:
+        value = os.environ.get(slot_name, "").strip()
+        if value:
+            return value
+    return os.environ.get(legacy_name, "").strip()
+
+
 def _get_config() -> tuple[int, str, str, str, str]:
+    active_slot = os.environ.get("HERMES_MODELCTRL_ACTIVE_SLOT", "").strip()
     threshold_raw = os.environ.get("HERMES_CODEX_QUOTA_THRESHOLD", "").strip()
     try:
         threshold = int(threshold_raw) if threshold_raw else _DEFAULT_QUOTA_THRESHOLD_PCT
@@ -61,19 +83,19 @@ def _get_config() -> tuple[int, str, str, str, str]:
         threshold = _DEFAULT_QUOTA_THRESHOLD_PCT
 
     primary_provider = (
-        os.environ.get("HERMES_CODEX_ROUTING_PRIMARY_PROVIDER", "").strip()
+        _env_with_slot(active_slot, "PRIMARY_PROVIDER", "HERMES_CODEX_ROUTING_PRIMARY_PROVIDER")
         or _DEFAULT_PRIMARY_PROVIDER
     )
     primary_model = (
-        os.environ.get("HERMES_CODEX_ROUTING_PRIMARY_MODEL", "").strip()
+        _env_with_slot(active_slot, "PRIMARY_MODEL", "HERMES_CODEX_ROUTING_PRIMARY_MODEL")
         or _DEFAULT_PRIMARY_MODEL
     )
     fallback_provider = (
-        os.environ.get("HERMES_CODEX_ROUTING_FALLBACK_PROVIDER", "").strip()
+        _env_with_slot(active_slot, "FALLBACK_PROVIDER", "HERMES_CODEX_ROUTING_FALLBACK_PROVIDER")
         or _DEFAULT_FALLBACK_PROVIDER
     )
     fallback_model = (
-        os.environ.get("HERMES_CODEX_ROUTING_FALLBACK_MODEL", "").strip()
+        _env_with_slot(active_slot, "FALLBACK_MODEL", "HERMES_CODEX_ROUTING_FALLBACK_MODEL")
         or _DEFAULT_FALLBACK_MODEL
     )
     return threshold, primary_provider, primary_model, fallback_provider, fallback_model
@@ -213,6 +235,14 @@ def resolve_codex_quota_routed_provider() -> QuotaRoutingResult:
         fallback_provider,
         fallback_model,
     ) = _get_config()
+
+    if primary_provider.strip().lower() != "openai-codex":
+        return QuotaRoutingResult(
+            provider=primary_provider,
+            model=primary_model,
+            codex_available=False,
+            fallback=False,
+        )
 
     if not _has_codex_credentials():
         return QuotaRoutingResult(

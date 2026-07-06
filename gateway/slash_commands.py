@@ -44,6 +44,8 @@ from utils import (
 
 logger = logging.getLogger("gateway.run")
 
+_MODELCTRL_SLOT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,31}$")
+
 # Upper bound on the off-loop agent-resource cleanup during a /new or /reset
 # (see _handle_reset_command). A stuck teardown must not block the event loop;
 # past this the reset proceeds and the cleanup is left to finish (or leak) in
@@ -1101,6 +1103,185 @@ class GatewaySlashCommandsMixin:
         return _telegramize_command_mentions(
             "\n".join(lines),
             getattr(getattr(event, "source", None), "platform", None),
+        )
+
+    async def _handle_modelctrl_command(self, event: MessageEvent) -> str:
+        """Handle /modelctrl command for deterministic quota-router slots."""
+        from gateway.run import _hermes_home
+
+        def _slot_key(slot: str, suffix: str) -> str:
+            normalized = re.sub(r"[^A-Z0-9]+", "_", slot.upper()).strip("_")
+            return f"HERMES_MODELCTRL_{normalized}_{suffix}"
+
+        def _env_files() -> list[Path]:
+            files = [_hermes_home / ".env"]
+            profile_root = _hermes_home / "profiles"
+            default_env = profile_root / "default" / ".gateway-env"
+            if default_env.exists():
+                files.append(default_env)
+            if profile_root.exists():
+                files.extend(
+                    sorted(
+                        path for path in profile_root.glob("*/.gateway-env")
+                        if path != default_env
+                    )
+                )
+            return files
+
+        def _read_env(path: Path) -> tuple[list[str], dict[str, str]]:
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except FileNotFoundError:
+                lines = []
+            values: dict[str, str] = {}
+            for line in lines:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, value = stripped.split("=", 1)
+                values[key.strip()] = value.strip().strip('"').strip("'")
+            return lines, values
+
+        def _write_env(path: Path, updates: dict[str, str]) -> bool:
+            lines, _values = _read_env(path)
+            seen: set[str] = set()
+            changed = False
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key = stripped.split("=", 1)[0].strip()
+                if key in updates:
+                    new_line = f"{key}={updates[key]}"
+                    seen.add(key)
+                    if lines[i] != new_line:
+                        lines[i] = new_line
+                        changed = True
+            missing = [key for key in updates if key not in seen]
+            if missing:
+                if lines and lines[-1].strip():
+                    lines.append("")
+                lines.extend(f"{key}={updates[key]}" for key in missing)
+                changed = True
+            if changed:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return changed
+
+        def _parse_provider_model(value: str, next_value: str | None = None) -> tuple[str, str, int]:
+            if "/" in value:
+                provider, model = value.split("/", 1)
+                consumed = 1
+            else:
+                if not next_value:
+                    raise ValueError("expected provider/model or provider model")
+                provider, model = value, next_value
+                consumed = 2
+            provider = provider.strip()
+            model = model.strip()
+            if not provider or not model or any(ch.isspace() for ch in provider + model):
+                raise ValueError("invalid provider/model")
+            return provider, model, consumed
+
+        def _load_combined_env() -> dict[str, str]:
+            combined: dict[str, str] = {}
+            for path in _env_files():
+                _lines, values = _read_env(path)
+                combined.update(values)
+            combined.update({k: v for k, v in os.environ.items() if k.startswith("HERMES_MODELCTRL_")})
+            return combined
+
+        args = shlex.split(event.get_command_args().strip())
+        if not args or args[0].lower() in {"show", "status"}:
+            values = _load_combined_env()
+            active = values.get("HERMES_MODELCTRL_ACTIVE_SLOT", "") or "<global>"
+            lines = [f"modelctrl active: {active}"]
+            slots: set[str] = set()
+            for key in values:
+                m = re.match(r"^HERMES_MODELCTRL_([A-Z0-9_]+)_(PRIMARY_PROVIDER|PRIMARY_MODEL|FALLBACK_PROVIDER|FALLBACK_MODEL)$", key)
+                if m:
+                    slots.add(m.group(1).lower())
+            if not slots:
+                lines.append("slots: <none configured; using global quota-router primary/fallback>")
+            for slot in sorted(slots):
+                prefix = f"HERMES_MODELCTRL_{slot.upper()}_"
+                primary = (
+                    f"{values.get(prefix + 'PRIMARY_PROVIDER', '<global>')}/"
+                    f"{values.get(prefix + 'PRIMARY_MODEL', '<global>')}"
+                )
+                fallback = (
+                    f"{values.get(prefix + 'FALLBACK_PROVIDER', '<global>')}/"
+                    f"{values.get(prefix + 'FALLBACK_MODEL', '<global>')}"
+                )
+                marker = " *" if slot == active else ""
+                lines.append(f"{slot}{marker}: primary={primary} fallback={fallback}")
+            return "\n".join(lines)
+
+        action = args[0].lower()
+        if action == "use" and len(args) >= 2:
+            slot = args[1]
+        elif action in {"set", "config"}:
+            if len(args) < 6:
+                return (
+                    "Usage: /modelctrl set <slot> primary <provider>/<model> "
+                    "fallback <provider>/<model>"
+                )
+            slot = args[1]
+        else:
+            slot = args[0]
+            action = "use"
+
+        if not _MODELCTRL_SLOT_RE.match(slot):
+            return "Invalid modelctrl slot. Use letters, numbers, '-' or '_', starting with a letter."
+        slot = slot.lower()
+
+        updates: dict[str, str] = {"HERMES_MODELCTRL_ACTIVE_SLOT": slot}
+        if action in {"set", "config"}:
+            i = 2
+            try:
+                while i < len(args):
+                    part = args[i].lower()
+                    if part not in {"primary", "fallback"}:
+                        return "Expected 'primary' or 'fallback' in /modelctrl set."
+                    provider, model, consumed = _parse_provider_model(
+                        args[i + 1], args[i + 2] if i + 2 < len(args) else None
+                    )
+                    updates[_slot_key(slot, f"{part.upper()}_PROVIDER")] = provider
+                    updates[_slot_key(slot, f"{part.upper()}_MODEL")] = model
+                    i += 1 + consumed
+            except (IndexError, ValueError) as exc:
+                return f"Invalid /modelctrl set syntax: {exc}"
+
+        changed = 0
+        for path in _env_files():
+            if _write_env(path, updates):
+                changed += 1
+        os.environ.update(updates)
+
+        source = await asyncio.to_thread(self._normalize_source_for_session_key, event.source)
+        session_key = self._session_key_for_source(source)
+        self._evict_cached_agent(session_key)
+
+        if action in {"set", "config"}:
+            primary = (
+                f"{updates.get(_slot_key(slot, 'PRIMARY_PROVIDER'), '<unchanged>')}/"
+                f"{updates.get(_slot_key(slot, 'PRIMARY_MODEL'), '<unchanged>')}"
+            )
+            fallback = (
+                f"{updates.get(_slot_key(slot, 'FALLBACK_PROVIDER'), '<unchanged>')}/"
+                f"{updates.get(_slot_key(slot, 'FALLBACK_MODEL'), '<unchanged>')}"
+            )
+            return (
+                f"modelctrl slot set: {slot}\n"
+                f"primary: {primary}\n"
+                f"fallback: {fallback}\n"
+                f"updated env files: {changed}\n"
+                "Next message will create a fresh agent with this slot."
+            )
+        return (
+            f"modelctrl active slot: {slot}\n"
+            f"updated env files: {changed}\n"
+            "Next message will create a fresh agent with this slot."
         )
 
     async def _handle_model_command(self, event: MessageEvent) -> Optional[str]:

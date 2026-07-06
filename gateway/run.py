@@ -8806,6 +8806,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if canonical == "model":
             return await self._handle_model_command(event)
 
+        if canonical == "modelctrl":
+            return await self._handle_modelctrl_command(event)
+
         if canonical == "codex-runtime":
             return await self._handle_codex_runtime_command(event)
 
