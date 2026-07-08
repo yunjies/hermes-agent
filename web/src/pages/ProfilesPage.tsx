@@ -16,6 +16,9 @@ import {
   MoreVertical,
   Pencil,
   Package,
+  RefreshCw,
+  Route,
+  Save,
   Sparkles,
   Terminal,
   Trash2,
@@ -25,7 +28,13 @@ import {
 import spinners from "unicode-animations";
 import { H2 } from "@nous-research/ui/ui/components/typography/h2";
 import { api } from "@/lib/api";
-import type { ActiveProfileInfo, ProfileInfo } from "@/lib/api";
+import type {
+  ActiveProfileInfo,
+  ModelCtrlSlot,
+  ModelCtrlState,
+  ModelCtrlVerifyResponse,
+  ProfileInfo,
+} from "@/lib/api";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { useToast } from "@nous-research/ui/hooks/use-toast";
 import { useConfirmDelete } from "@nous-research/ui/hooks/use-confirm-delete";
@@ -48,6 +57,11 @@ import { cn, themedBody } from "@/lib/utils";
 // Mirrors hermes_cli/profiles.py::_PROFILE_ID_RE so we can reject obviously
 // invalid names (uppercase, spaces, …) before round-tripping a doomed POST.
 const PROFILE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+type ModelCtrlSlotDraft = Pick<
+  ModelCtrlSlot,
+  "primary_provider" | "primary_model" | "fallback_provider" | "fallback_model"
+>;
 
 /** Braille unicode spinner (`unicode-animations`); static first frame when reduced motion is preferred. */
 function ProfilesLoadingSpinner() {
@@ -256,6 +270,17 @@ export default function ProfilesPage() {
   const navigate = useNavigate();
   const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
   const [activeInfo, setActiveInfo] = useState<ActiveProfileInfo | null>(null);
+  const [modelCtrl, setModelCtrl] = useState<ModelCtrlState | null>(null);
+  const [modelCtrlDrafts, setModelCtrlDrafts] = useState<
+    Record<string, ModelCtrlSlotDraft>
+  >({});
+  const [modelCtrlVerify, setModelCtrlVerify] = useState<
+    Record<string, ModelCtrlVerifyResponse>
+  >({});
+  const [modelCtrlSaving, setModelCtrlSaving] = useState<string | null>(null);
+  const [modelCtrlVerifying, setModelCtrlVerifying] = useState<string | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const { toast, showToast } = useToast();
   const { t } = useI18n();
@@ -392,15 +417,37 @@ export default function ProfilesPage() {
       });
   }, [modelChoices]);
 
+  const applyModelCtrlState = useCallback((state: ModelCtrlState | null) => {
+    setModelCtrl(state);
+    if (!state) return;
+    setModelCtrlDrafts((prev) => {
+      const next: Record<string, ModelCtrlSlotDraft> = {};
+      for (const slot of state.slots) {
+        next[slot.name] = prev[slot.name] ?? {
+          primary_provider: slot.primary_provider,
+          primary_model: slot.primary_model,
+          fallback_provider: slot.fallback_provider,
+          fallback_model: slot.fallback_model,
+        };
+      }
+      return next;
+    });
+  }, []);
+
   const load = useCallback(() => {
-    Promise.all([api.getProfiles(), api.getActiveProfile().catch(() => null)])
-      .then(([res, active]) => {
+    Promise.all([
+      api.getProfiles(),
+      api.getActiveProfile().catch(() => null),
+      api.getModelCtrl().catch(() => null),
+    ])
+      .then(([res, active, modelCtrlState]) => {
         setProfiles(res.profiles);
         setActiveInfo(active);
+        applyModelCtrlState(modelCtrlState);
       })
       .catch((e) => showToast(`${t.status.error}: ${e}`, "error"))
       .finally(() => setLoading(false));
-  }, [showToast, t.status.error]);
+  }, [applyModelCtrlState, showToast, t.status.error]);
 
   useEffect(() => {
     load();
@@ -509,6 +556,76 @@ export default function ProfilesPage() {
       showToast(`${t.status.error}: ${e}`, "error");
     } finally {
       setSettingActive(null);
+    }
+  };
+
+  const handleRefreshModelCtrl = async () => {
+    try {
+      applyModelCtrlState(await api.getModelCtrl());
+      showToast("Model control refreshed", "success");
+    } catch (e) {
+      showToast(`${t.status.error}: ${e}`, "error");
+    }
+  };
+
+  const handleUseModelCtrlSlot = async (slot: string) => {
+    setModelCtrlSaving(`use:${slot}`);
+    try {
+      applyModelCtrlState(await api.useModelCtrlSlot(slot));
+      showToast(`Model control slot active: ${slot}`, "success");
+    } catch (e) {
+      showToast(`${t.status.error}: ${e}`, "error");
+    } finally {
+      setModelCtrlSaving(null);
+    }
+  };
+
+  const updateModelCtrlDraft = (
+    slot: string,
+    key: keyof ModelCtrlSlotDraft,
+    value: string,
+  ) => {
+    setModelCtrlDrafts((prev) => ({
+      ...prev,
+      [slot]: {
+        ...(prev[slot] ?? {
+          primary_provider: "",
+          primary_model: "",
+          fallback_provider: "",
+          fallback_model: "",
+        }),
+        [key]: value,
+      },
+    }));
+  };
+
+  const handleSaveModelCtrlSlot = async (slot: string) => {
+    const draft = modelCtrlDrafts[slot];
+    if (!draft) return;
+    setModelCtrlSaving(`save:${slot}`);
+    try {
+      applyModelCtrlState(await api.updateModelCtrlSlot(slot, draft));
+      showToast(`Model control slot saved: ${slot}`, "success");
+    } catch (e) {
+      showToast(`${t.status.error}: ${e}`, "error");
+    } finally {
+      setModelCtrlSaving(null);
+    }
+  };
+
+  const handleVerifyModelCtrlSlot = async (slot: string) => {
+    setModelCtrlVerifying(slot);
+    try {
+      const result = await api.verifyModelCtrlSlot(slot);
+      setModelCtrlVerify((prev) => ({ ...prev, [slot]: result }));
+      showToast(
+        `Route: ${result.route.provider}/${result.route.model}`,
+        "success",
+      );
+    } catch (e) {
+      showToast(`${t.status.error}: ${e}`, "error");
+    } finally {
+      setModelCtrlVerifying(null);
     }
   };
 
@@ -1002,6 +1119,223 @@ export default function ProfilesPage() {
                 ({activeInfo.current})
               </span>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {modelCtrl && (
+        <Card>
+          <CardContent className="flex flex-col gap-4 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Route className="h-4 w-4 text-muted-foreground" />
+                <H2 variant="sm" className="text-muted-foreground">
+                  Model Control
+                </H2>
+                <Badge>{modelCtrl.active_slot}</Badge>
+              </div>
+
+              <Button
+                outlined
+                size="sm"
+                className="uppercase"
+                onClick={handleRefreshModelCtrl}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Refresh
+              </Button>
+            </div>
+
+            <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
+              <div>
+                <span className="block uppercase tracking-wider">Allowlist</span>
+                <span className="font-mono text-foreground">
+                  {modelCtrl.global.allowlist || "not set"}
+                </span>
+              </div>
+              <div>
+                <span className="block uppercase tracking-wider">Global primary</span>
+                <span className="font-mono text-foreground">
+                  {modelCtrl.global.primary_provider || "-"} /{" "}
+                  {modelCtrl.global.primary_model || "-"}
+                </span>
+              </div>
+              <div>
+                <span className="block uppercase tracking-wider">Global fallback</span>
+                <span className="font-mono text-foreground">
+                  {modelCtrl.global.fallback_provider || "-"} /{" "}
+                  {modelCtrl.global.fallback_model || "-"}
+                </span>
+              </div>
+              <div>
+                <span className="block uppercase tracking-wider">Scope</span>
+                <span className="font-mono text-foreground">new sessions only</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+              {modelCtrl.slots.map((slot) => {
+                const draft = modelCtrlDrafts[slot.name] ?? {
+                  primary_provider: slot.primary_provider,
+                  primary_model: slot.primary_model,
+                  fallback_provider: slot.fallback_provider,
+                  fallback_model: slot.fallback_model,
+                };
+                const verify = modelCtrlVerify[slot.name];
+                const dirty =
+                  draft.primary_provider !== slot.primary_provider ||
+                  draft.primary_model !== slot.primary_model ||
+                  draft.fallback_provider !== slot.fallback_provider ||
+                  draft.fallback_model !== slot.fallback_model;
+                const using = modelCtrlSaving === `use:${slot.name}`;
+                const saving = modelCtrlSaving === `save:${slot.name}`;
+                const verifying = modelCtrlVerifying === slot.name;
+                return (
+                  <div
+                    key={slot.name}
+                    className={cn(
+                      "grid gap-3 border border-border p-3",
+                      slot.active && "border-foreground/60",
+                    )}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mondwest text-display text-sm tracking-wider">
+                          {slot.name}
+                        </span>
+                        {slot.active && <Badge>{L.activeBadge}</Badge>}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          outlined={!slot.active}
+                          size="sm"
+                          className="uppercase"
+                          disabled={slot.active || using}
+                          onClick={() => handleUseModelCtrlSlot(slot.name)}
+                        >
+                          {using ? "Using" : "Use"}
+                        </Button>
+                        <Button
+                          outlined
+                          size="sm"
+                          className="uppercase"
+                          disabled={verifying}
+                          onClick={() => handleVerifyModelCtrlSlot(slot.name)}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          {verifying ? "Checking" : "Verify"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="uppercase"
+                          disabled={!dirty || saving}
+                          onClick={() => handleSaveModelCtrlSlot(slot.name)}
+                        >
+                          <Save className="h-3.5 w-3.5" />
+                          {saving ? "Saving" : "Save"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="grid gap-2">
+                        <Label htmlFor={`modelctrl-${slot.name}-primary-provider`}>
+                          Primary provider
+                        </Label>
+                        <Input
+                          id={`modelctrl-${slot.name}-primary-provider`}
+                          value={draft.primary_provider}
+                          onChange={(e) =>
+                            updateModelCtrlDraft(
+                              slot.name,
+                              "primary_provider",
+                              e.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor={`modelctrl-${slot.name}-primary-model`}>
+                          Primary model
+                        </Label>
+                        <Input
+                          id={`modelctrl-${slot.name}-primary-model`}
+                          value={draft.primary_model}
+                          onChange={(e) =>
+                            updateModelCtrlDraft(
+                              slot.name,
+                              "primary_model",
+                              e.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor={`modelctrl-${slot.name}-fallback-provider`}>
+                          Fallback provider
+                        </Label>
+                        <Input
+                          id={`modelctrl-${slot.name}-fallback-provider`}
+                          value={draft.fallback_provider}
+                          onChange={(e) =>
+                            updateModelCtrlDraft(
+                              slot.name,
+                              "fallback_provider",
+                              e.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor={`modelctrl-${slot.name}-fallback-model`}>
+                          Fallback model
+                        </Label>
+                        <Input
+                          id={`modelctrl-${slot.name}-fallback-model`}
+                          value={draft.fallback_model}
+                          onChange={(e) =>
+                            updateModelCtrlDraft(
+                              slot.name,
+                              "fallback_model",
+                              e.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    {verify && (
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-2 text-xs">
+                        <span className="font-mono text-foreground">
+                          route {verify.route.provider}/{verify.route.model}
+                        </span>
+                        <span className="text-muted-foreground">
+                          used{" "}
+                          {verify.route.used_percent == null
+                            ? "unknown"
+                            : `${verify.route.used_percent}%`}
+                        </span>
+                        <span
+                          className={cn(
+                            "font-mono",
+                            verify.route.fallback
+                              ? "text-warning"
+                              : "text-success",
+                          )}
+                        >
+                          {verify.route.fallback ? "fallback" : "primary"}
+                        </span>
+                        {verify.route.error && (
+                          <span className="text-destructive">
+                            {verify.route.error}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </CardContent>
         </Card>
       )}

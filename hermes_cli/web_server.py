@@ -10507,6 +10507,17 @@ class ProfileModelUpdate(BaseModel):
     model: str
 
 
+class ModelCtrlUseRequest(BaseModel):
+    slot: str
+
+
+class ModelCtrlSlotUpdate(BaseModel):
+    primary_provider: str
+    primary_model: str
+    fallback_provider: str
+    fallback_model: str
+
+
 class ProfileDescribeAuto(BaseModel):
     overwrite: bool = False
 
@@ -10535,6 +10546,206 @@ def _profile_to_dict(info) -> Dict[str, Any]:
         "distribution_source": _profile_attr(info, "distribution_source"),
         "has_alias": _profile_attr(info, "alias_path") is not None,
     }
+
+
+_MODELCTRL_SLOT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,31}$")
+_MODELCTRL_VALUE_RE = re.compile(r"^[^\s=]+$")
+_MODELCTRL_DEFAULT_SLOTS = ("primary", "secondary", "reasoning", "coding")
+
+
+def _modelctrl_data_root() -> Path:
+    configured = os.environ.get("HERMES_MODELCTRL_DATA_ROOT", "").strip()
+    if configured:
+        return Path(configured)
+    live_root = Path("/opt/data")
+    if live_root.exists():
+        return live_root
+    return get_hermes_home()
+
+
+def _modelctrl_env_files() -> List[Path]:
+    root = _modelctrl_data_root()
+    files = [root / ".env"]
+    profiles_root = root / "profiles"
+    if profiles_root.is_dir():
+        for entry in sorted(profiles_root.iterdir()):
+            if entry.is_dir():
+                env_path = entry / ".gateway-env"
+                if env_path.exists():
+                    files.append(env_path)
+    seen: set[Path] = set()
+    unique: List[Path] = []
+    for path in files:
+        resolved = path.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(path)
+    return unique
+
+
+def _read_modelctrl_env(path: Path) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    if not path.exists():
+        return values
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            if key.startswith("HERMES_MODELCTRL_") or key.startswith("HERMES_CODEX_ROUTING_"):
+                values[key] = value.strip().strip('"').strip("'")
+    except OSError:
+        _log.exception("Failed to read modelctrl env file %s", path)
+    return values
+
+
+def _combined_modelctrl_env() -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    for path in _modelctrl_env_files():
+        values.update(_read_modelctrl_env(path))
+    for key, value in os.environ.items():
+        if key.startswith("HERMES_MODELCTRL_") or key.startswith("HERMES_CODEX_ROUTING_"):
+            values[key] = value
+    return values
+
+
+def _validate_modelctrl_slot(slot: str) -> str:
+    normalized = (slot or "").strip()
+    if not _MODELCTRL_SLOT_RE.match(normalized):
+        raise HTTPException(status_code=400, detail="Invalid model control slot name.")
+    return normalized
+
+
+def _validate_modelctrl_value(value: str, field: str) -> str:
+    normalized = (value or "").strip()
+    if not normalized or not _MODELCTRL_VALUE_RE.match(normalized):
+        raise HTTPException(status_code=400, detail=f"Invalid {field}.")
+    return normalized
+
+
+def _modelctrl_slot_keys(slot: str) -> Tuple[str, str, str, str]:
+    prefix = re.sub(r"[^A-Za-z0-9]+", "_", slot).upper().strip("_")
+    return (
+        f"HERMES_MODELCTRL_{prefix}_PRIMARY_PROVIDER",
+        f"HERMES_MODELCTRL_{prefix}_PRIMARY_MODEL",
+        f"HERMES_MODELCTRL_{prefix}_FALLBACK_PROVIDER",
+        f"HERMES_MODELCTRL_{prefix}_FALLBACK_MODEL",
+    )
+
+
+def _write_modelctrl_env(path: Path, updates: Dict[str, str]) -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    seen: set[str] = set()
+    changed = False
+    output: List[str] = []
+    for line in lines:
+        if "=" not in line or line.lstrip().startswith("#"):
+            output.append(line)
+            continue
+        key, _value = line.split("=", 1)
+        key = key.strip()
+        if key in updates:
+            next_line = f"{key}={updates[key]}"
+            output.append(next_line)
+            seen.add(key)
+            changed = changed or line != next_line
+        else:
+            output.append(line)
+    for key, value in updates.items():
+        if key not in seen:
+            output.append(f"{key}={value}")
+            changed = True
+    if changed:
+        path.write_text("\n".join(output) + "\n", encoding="utf-8")
+    return changed
+
+
+def _modelctrl_state(extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    env = _combined_modelctrl_env()
+    active_slot = env.get("HERMES_MODELCTRL_ACTIVE_SLOT", "primary").strip() or "primary"
+    slot_names = set(_MODELCTRL_DEFAULT_SLOTS)
+    slot_names.add(active_slot)
+    for key in env:
+        match = re.match(r"^HERMES_MODELCTRL_([A-Z0-9_]+)_(?:PRIMARY|FALLBACK)_(?:PROVIDER|MODEL)$", key)
+        if match:
+            slot_names.add(match.group(1).lower())
+    slots: List[Dict[str, Any]] = []
+    for slot in sorted(slot_names):
+        primary_provider_key, primary_model_key, fallback_provider_key, fallback_model_key = _modelctrl_slot_keys(slot)
+        slots.append({
+            "name": slot,
+            "primary_provider": env.get(primary_provider_key, env.get("HERMES_CODEX_ROUTING_PRIMARY_PROVIDER", "")),
+            "primary_model": env.get(primary_model_key, env.get("HERMES_CODEX_ROUTING_PRIMARY_MODEL", "")),
+            "fallback_provider": env.get(fallback_provider_key, env.get("HERMES_CODEX_ROUTING_FALLBACK_PROVIDER", "")),
+            "fallback_model": env.get(fallback_model_key, env.get("HERMES_CODEX_ROUTING_FALLBACK_MODEL", "")),
+            "active": slot == active_slot,
+        })
+    state: Dict[str, Any] = {
+        "active_slot": active_slot,
+        "slots": slots,
+        "global": {
+            "allowlist": env.get("HERMES_CODEX_ROUTING_ALLOWLIST", ""),
+            "primary_provider": env.get("HERMES_CODEX_ROUTING_PRIMARY_PROVIDER", ""),
+            "primary_model": env.get("HERMES_CODEX_ROUTING_PRIMARY_MODEL", ""),
+            "fallback_provider": env.get("HERMES_CODEX_ROUTING_FALLBACK_PROVIDER", ""),
+            "fallback_model": env.get("HERMES_CODEX_ROUTING_FALLBACK_MODEL", ""),
+        },
+    }
+    if extra:
+        state.update(extra)
+    return state
+
+
+def _verify_modelctrl_slot(slot: str) -> Dict[str, Any]:
+    slot = _validate_modelctrl_slot(slot)
+    env = os.environ.copy()
+    env.update(_combined_modelctrl_env())
+    env["HERMES_MODELCTRL_ACTIVE_SLOT"] = slot
+    code = """
+import json
+from agent.codex_quota_router import _get_config, resolve_codex_quota_routed_provider
+
+cfg = _get_config()
+threshold, primary_provider, primary_model, fallback_provider, fallback_model = cfg
+route = resolve_codex_quota_routed_provider()
+print(json.dumps({
+    "slot": __import__("os").environ.get("HERMES_MODELCTRL_ACTIVE_SLOT", "primary"),
+    "config": {
+        "threshold": threshold,
+        "primary_provider": primary_provider,
+        "primary_model": primary_model,
+        "fallback_provider": fallback_provider,
+        "fallback_model": fallback_model,
+    },
+    "route": {
+        "provider": route.provider,
+        "model": route.model,
+        "codex_available": route.codex_available,
+        "fallback": route.fallback,
+        "error": route.error,
+        "used_percent": route.used_percent,
+    },
+}))
+""".strip()
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(PROJECT_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        _log.warning("modelctrl verify failed: %s", proc.stderr.strip())
+        raise HTTPException(status_code=500, detail="Model control verification failed.")
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        _log.warning("modelctrl verify returned invalid JSON: %s", proc.stdout)
+        raise HTTPException(status_code=500, detail="Model control verification returned invalid JSON.") from exc
 
 
 def _fallback_profile_dicts(profiles_mod) -> List[Dict[str, Any]]:
@@ -10721,6 +10932,40 @@ def _disable_unselected_skills(profile_dir: Path, keep: List[str]) -> int:
     finally:
         reset_hermes_home_override(token)
     return disabled_count
+
+
+@app.get("/api/modelctrl")
+async def get_modelctrl_endpoint():
+    return _modelctrl_state()
+
+
+@app.post("/api/modelctrl/use")
+async def use_modelctrl_slot_endpoint(body: ModelCtrlUseRequest):
+    slot = _validate_modelctrl_slot(body.slot)
+    updates = {"HERMES_MODELCTRL_ACTIVE_SLOT": slot}
+    changed = sum(1 for path in _modelctrl_env_files() if _write_modelctrl_env(path, updates))
+    os.environ.update(updates)
+    return _modelctrl_state({"ok": True, "changed_files": changed})
+
+
+@app.put("/api/modelctrl/slots/{slot}")
+async def update_modelctrl_slot_endpoint(slot: str, body: ModelCtrlSlotUpdate):
+    slot = _validate_modelctrl_slot(slot)
+    primary_provider_key, primary_model_key, fallback_provider_key, fallback_model_key = _modelctrl_slot_keys(slot)
+    updates = {
+        primary_provider_key: _validate_modelctrl_value(body.primary_provider, "primary provider"),
+        primary_model_key: _validate_modelctrl_value(body.primary_model, "primary model"),
+        fallback_provider_key: _validate_modelctrl_value(body.fallback_provider, "fallback provider"),
+        fallback_model_key: _validate_modelctrl_value(body.fallback_model, "fallback model"),
+    }
+    changed = sum(1 for path in _modelctrl_env_files() if _write_modelctrl_env(path, updates))
+    os.environ.update(updates)
+    return _modelctrl_state({"ok": True, "changed_files": changed})
+
+
+@app.post("/api/modelctrl/verify")
+async def verify_modelctrl_slot_endpoint(body: ModelCtrlUseRequest):
+    return _verify_modelctrl_slot(body.slot)
 
 
 @app.get("/api/profiles")

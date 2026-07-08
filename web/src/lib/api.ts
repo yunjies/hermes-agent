@@ -586,6 +586,39 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     }),
+  getModelCtrl: () => fetchJSON<ModelCtrlState>("/api/modelctrl"),
+  useModelCtrlSlot: (slot: string) =>
+    fetchJSON<ModelCtrlState & { ok: boolean; changed_files: number }>(
+      "/api/modelctrl/use",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slot }),
+      },
+    ),
+  updateModelCtrlSlot: (
+    slot: string,
+    body: {
+      primary_provider: string;
+      primary_model: string;
+      fallback_provider: string;
+      fallback_model: string;
+    },
+  ) =>
+    fetchJSON<ModelCtrlState & { ok: boolean; changed_files: number }>(
+      `/api/modelctrl/slots/${encodeURIComponent(slot)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+  verifyModelCtrlSlot: (slot: string) =>
+    fetchJSON<ModelCtrlVerifyResponse>("/api/modelctrl/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot }),
+    }),
   createProfile: (body: {
     name: string;
     clone_from?: string | null;
@@ -1875,6 +1908,46 @@ export interface ProfileInfo {
   distribution_version: string | null;
   distribution_source: string | null;
   has_alias: boolean;
+}
+
+export interface ModelCtrlSlot {
+  name: string;
+  primary_provider: string;
+  primary_model: string;
+  fallback_provider: string;
+  fallback_model: string;
+  active: boolean;
+}
+
+export interface ModelCtrlState {
+  active_slot: string;
+  slots: ModelCtrlSlot[];
+  global: {
+    allowlist: string;
+    primary_provider: string;
+    primary_model: string;
+    fallback_provider: string;
+    fallback_model: string;
+  };
+}
+
+export interface ModelCtrlVerifyResponse {
+  slot: string;
+  config: {
+    threshold: number;
+    primary_provider: string;
+    primary_model: string;
+    fallback_provider: string;
+    fallback_model: string;
+  };
+  route: {
+    provider: string;
+    model: string;
+    codex_available: boolean;
+    fallback: boolean;
+    error: string | null;
+    used_percent: number | null;
+  };
 }
 
 export interface ModelsAnalyticsModelEntry {
