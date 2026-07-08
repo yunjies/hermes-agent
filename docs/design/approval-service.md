@@ -1,6 +1,6 @@
 # Approval Service Landing Spec
 
-Status: design proposal
+Status: first-delivery implementation spec
 Scope: Approval Service only
 
 ## Goal
@@ -30,6 +30,12 @@ Core rule:
 Approval Service owns decision and audit.
 Producer subsystem owns artifact and apply.
 ```
+
+Approval Service is profile-scoped runtime infrastructure. It is not a
+developer-machine task board, a Codex-specific workflow, or a private work
+directory convention. Runtime state lives under the active Hermes profile home.
+The default profile is identified as `default`; profile display names or soul
+names are not used as storage owners.
 
 ## Runtime Boundary
 
@@ -236,8 +242,10 @@ text alone.
 
 ### Owner Gate
 
-Every approval request must declare an owner unless a policy explicitly allows
-ownerless requests for that request type.
+Every approval request must declare the profile that owns the decision scope
+unless a policy explicitly allows ownerless requests for that request type.
+Subsystem names such as `memory` and `skills` are producer domains, not
+`owner.profile_id` values.
 
 Missing owner without an allow rule:
 
@@ -727,13 +735,14 @@ Result: pending higher approval.
 
 ## Storage
 
-First-phase storage can use JSONL with small indexes:
+First-phase storage uses JSON snapshots plus an append-only audit log and small
+indexes:
 
 ```text
-/opt/data/approval/
-  requests.jsonl
+<active-profile-hermes-home>/approvals/
+  requests.json
   audit.jsonl
-  policy.yaml
+  decision_examples.jsonl
   indexes/
     by_status.json
     by_artifact.json
@@ -743,7 +752,7 @@ First-phase storage can use JSONL with small indexes:
 Requirements:
 
 - `audit.jsonl` is append-only.
-- `requests.jsonl` records current request snapshots or state-update events.
+- `requests.json` records current request snapshots.
 - Request updates must write audit events in the same logical operation.
 - Request update plus audit append must be protected by a file lock.
 - Writers must use temporary files plus atomic rename for index updates.
@@ -757,7 +766,8 @@ Requirements:
 SQLite can replace JSONL later without changing producer contracts.
 
 Approval Service evaluates policy but does not author, mutate, or activate
-policy rules. `policy.yaml` is read-only from the service's perspective.
+policy rules. If a policy file is added later, it is read-only from the
+service's perspective.
 
 ## Rollout Plan
 

@@ -393,6 +393,29 @@ class TestResolveApproval:
         assert 5 in adapter._approval_state
 
     @pytest.mark.asyncio
+    async def test_user_id_allowed_click_resolves_when_open_id_differs(self):
+        adapter = _make_adapter()
+        adapter._allowed_group_users = {"user_allowed"}
+        adapter._approval_state[7] = {
+            "session_key": "sess-7",
+            "message_id": "msg_007",
+            "chat_id": "oc_12345",
+        }
+
+        with patch("tools.approval.resolve_gateway_approval", return_value=1) as mock_resolve:
+            await adapter._resolve_approval(
+                7,
+                "once",
+                "Allowed User",
+                open_id="ou_runtime",
+                user_id="user_allowed",
+                chat_id="oc_12345",
+            )
+
+        mock_resolve.assert_called_once_with("sess-7", "once")
+        assert 7 not in adapter._approval_state
+
+    @pytest.mark.asyncio
     async def test_chat_mismatch_does_not_resolve(self):
         adapter = _make_adapter()
         adapter._approval_state[6] = {

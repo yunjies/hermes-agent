@@ -153,8 +153,28 @@ def test_audit_has_user_actor_for_decision(monkeypatch):
     req = _artifact_request(svc, artifact_id="artifact-audit")
     svc.decide_request(req["id"], "approved", reason="manual")
 
-    audit_path = get_hermes_home() / "approval" / "audit.jsonl"
+    audit_path = get_hermes_home() / "approvals" / "audit.jsonl"
     events = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
     decision_events = [e for e in events if e["event_type"] == "decision_recorded"]
     assert decision_events
     assert decision_events[-1]["actor"]["type"] == "user"
+
+
+def test_write_pending_request_uses_active_profile_owner(monkeypatch):
+    monkeypatch.setenv("HERMES_APPROVAL_SERVICE_MODE", "shadow")
+    monkeypatch.setattr("hermes_cli.profiles.get_active_profile_name", lambda: "framework-maintainer")
+    from tools import approval_service as svc
+    from tools import write_approval as wa
+
+    rec = wa.stage_write(
+        "skills",
+        {"action": "upsert", "name": "example", "content": "body"},
+        summary="profile-owned skill write",
+        origin="foreground",
+    )
+
+    req = svc.request_for_write_pending("skills", rec)
+
+    assert req["source"]["profile_id"] == "framework-maintainer"
+    assert req["owner"]["profile_id"] == "framework-maintainer"
+    assert req["owner"]["scope"] == "skills.write_pending"

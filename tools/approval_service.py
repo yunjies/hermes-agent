@@ -51,7 +51,7 @@ def current_mode() -> str:
 
 
 def _approval_dir() -> Path:
-    return get_hermes_home() / "approval"
+    return get_hermes_home() / "approvals"
 
 
 def _requests_path() -> Path:
@@ -68,6 +68,17 @@ def _examples_path() -> Path:
 
 def _lock_dir() -> Path:
     return _approval_dir() / ".lock"
+
+
+def _current_profile_id() -> str:
+    try:
+        from hermes_cli.profiles import get_active_profile_name
+
+        profile = get_active_profile_name()
+    except Exception:
+        profile = os.environ.get("HERMES_PROFILE")
+    profile = (profile or "").strip()
+    return profile or "default"
 
 
 @contextmanager
@@ -597,10 +608,11 @@ def request_for_write_pending(subsystem: str, rec: Dict[str, Any]) -> Dict[str, 
     payload = rec.get("payload", {})
     artifact_hash = stable_hash({"subsystem": subsystem, "id": rec.get("id"), "payload": payload, "summary": rec.get("summary")})
     risk_level = "L2" if subsystem == "skills" else "L1"
+    profile_id = _current_profile_id()
     return ensure_request_for_artifact(
         request_type={"domain": "write", "operation": "accept", "subtype": subsystem},
-        source={"profile_id": None, "session_id": None, "requested_by": "user", "request_message_id": None},
-        owner={"profile_id": subsystem, "scope": "write_approval"},
+        source={"profile_id": profile_id, "session_id": None, "requested_by": "user", "request_message_id": None},
+        owner={"profile_id": profile_id, "scope": f"{subsystem}.write_pending"},
         target={
             "ref": f"pending/{subsystem}/{rec.get('id')}.json",
             "artifact_id": artifact_id,
