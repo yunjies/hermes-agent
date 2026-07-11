@@ -64,6 +64,26 @@ class TestWriteDenyExactPaths:
 
         assert _is_write_denied(str(global_env)) is True
 
+    def test_named_profile_own_env_is_not_hard_denied(self, tmp_path, monkeypatch):
+        """A named profile can update its own .env through the file tool.
+
+        Cross-profile writes are handled by the soft profile guard; the hard
+        credential denylist should only keep protecting the shared root .env.
+        """
+        root = tmp_path / "hermes_root"
+        profile_home = root / "profiles" / "coder"
+        profile_home.mkdir(parents=True)
+        profile_env = profile_home / ".env"
+        profile_env.write_text("PROFILE_SETTING=1\n")
+
+        monkeypatch.setenv("HERMES_HOME", str(profile_home))
+
+        from hermes_constants import get_hermes_home, get_default_hermes_root
+        assert get_hermes_home() == profile_home
+        assert get_default_hermes_root() == root
+
+        assert _is_write_denied(str(profile_env)) is False
+
     def test_shell_profiles_are_writable(self):
         home = str(Path.home())
         for name in [".bashrc", ".zshrc", ".profile", ".bash_profile", ".zprofile"]:

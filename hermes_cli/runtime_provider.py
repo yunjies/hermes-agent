@@ -1443,7 +1443,6 @@ def resolve_runtime_provider(
     behavior (api_mode derived from config).
     """
     requested_provider = resolve_requested_provider(requested)
-
     if requested_provider == "moa":
         return {
             "provider": "moa",
@@ -1618,7 +1617,7 @@ def resolve_runtime_provider(
                     logger.debug("Nous pool entry agent_key still unavailable, falling through to runtime resolution")
                     pool_api_key = ""
         if entry is not None and pool_api_key:
-            return _resolve_runtime_from_pool_entry(
+            runtime = _resolve_runtime_from_pool_entry(
                 provider=provider,
                 entry=entry,
                 requested_provider=requested_provider,
@@ -1626,6 +1625,7 @@ def resolve_runtime_provider(
                 pool=pool,
                 target_model=target_model,
             )
+            return runtime
 
     if provider == "nous":
         try:
@@ -1652,7 +1652,7 @@ def resolve_runtime_provider(
     if provider == "openai-codex":
         try:
             creds = resolve_codex_runtime_credentials()
-            return {
+            runtime = {
                 "provider": "openai-codex",
                 "api_mode": "codex_responses",
                 "base_url": creds.get("base_url", "").rstrip("/"),
@@ -1661,6 +1661,7 @@ def resolve_runtime_provider(
                 "last_refresh": creds.get("last_refresh"),
                 "requested_provider": requested_provider,
             }
+            return runtime
         except AuthError:
             if requested_provider != "auto":
                 raise
@@ -1919,7 +1920,7 @@ def resolve_runtime_provider(
             base_url = re.sub(r"/v1/?$", "", base_url)
         if provider == "lmstudio":
             base_url = auth_mod._normalize_lmstudio_runtime_base_url(base_url)
-        return {
+        runtime = {
             "provider": provider,
             "api_mode": api_mode,
             "base_url": base_url,
@@ -1927,6 +1928,7 @@ def resolve_runtime_provider(
             "source": creds.get("source", "env"),
             "requested_provider": requested_provider,
         }
+        return runtime
 
     runtime = _resolve_openrouter_runtime(
         requested_provider=requested_provider,

@@ -3080,3 +3080,5 @@ def test_auto_provider_lookalike_cloud_host_does_not_bypass_to_cloud(monkeypatch
         f"Look-alike host must not be classified as Anthropic cloud: {resolved}"
     )
     assert resolved["base_url"] == lookalike
+
+
