@@ -1202,6 +1202,8 @@ def init_agent(
     agent._user_profile_enabled = False
     agent._memory_nudge_interval = 10
     agent._turns_since_memory = 0
+    agent._methodology_distillation_interval = 1
+    agent._turns_since_methodology_distillation = 0
     agent._iters_since_skill = 0
     if not skip_memory:
         try:
@@ -1218,6 +1220,12 @@ def init_agent(
                 agent._memory_store.load_from_disk()
         except Exception:
             pass  # Memory is optional -- don't break agent init
+
+    try:
+        from agent.methodology_distillation import methodology_distillation_interval
+        agent._methodology_distillation_interval = int(methodology_distillation_interval())
+    except Exception:
+        pass
     
 
 

@@ -44,6 +44,8 @@ def _fmt_pending_list(subsystem: str) -> str:
     lines.append(f"Apply: {where}   Reject: /{subsystem} reject <id>")
     if subsystem == wa.SKILLS:
         lines.append("Review full diff: /skills diff <id>")
+    if subsystem == wa.METHODOLOGY_DISTILLATION:
+        lines.append("Review proposal: /distill diff <id>")
     return "\n".join(lines)
 
 
@@ -90,8 +92,8 @@ def handle_pending_subcommand(
     if sub in {"reject", "deny", "drop"}:
         return _reject(subsystem, rest)
 
-    if sub == "diff" and subsystem == wa.SKILLS:
-        return _diff(rest)
+    if sub == "diff" and subsystem in {wa.SKILLS, wa.METHODOLOGY_DISTILLATION}:
+        return _diff(subsystem, rest)
 
     if sub in {"approval", "mode"}:  # 'mode' kept as a back-compat alias
         return _set_approval(subsystem, rest, set_mode_fn)
@@ -147,10 +149,15 @@ def _apply_one(subsystem: str, rec, memory_store):
             from tools.memory_tool import apply_memory_pending
             result = apply_memory_pending(payload, memory_store)
             return bool(result.get("success")), result.get("error", "")
-        else:
+        if subsystem == wa.SKILLS:
             from tools.skill_manager_tool import apply_skill_pending
             result = json.loads(apply_skill_pending(payload))
             return bool(result.get("success")), result.get("error", "")
+        if subsystem == wa.METHODOLOGY_DISTILLATION:
+            from agent.methodology_distillation import apply_methodology_distillation_pending
+            result = apply_methodology_distillation_pending(payload)
+            return bool(result.get("success")), result.get("error", "")
+        return False, f"unknown subsystem: {subsystem}"
     except Exception as e:
         return False, str(e)
 
@@ -162,22 +169,40 @@ def _reject(subsystem: str, rest: List[str]) -> str:
     if target.lower() == "all":
         n = 0
         for rec in wa.list_pending(subsystem):
+            if subsystem == wa.METHODOLOGY_DISTILLATION:
+                try:
+                    from agent.methodology_distillation import reject_methodology_distillation_pending
+                    reject_methodology_distillation_pending(rec)
+                except Exception:
+                    pass
             if wa.discard_pending(subsystem, rec["id"]):
                 n += 1
         return f"Rejected {n} pending {subsystem} write(s)."
+    if subsystem == wa.METHODOLOGY_DISTILLATION:
+        rec = wa.get_pending(subsystem, target)
+        if rec:
+            try:
+                from agent.methodology_distillation import reject_methodology_distillation_pending
+                reject_methodology_distillation_pending(rec)
+            except Exception:
+                pass
     if wa.discard_pending(subsystem, target):
         return f"Rejected pending {subsystem} write '{target}'."
     return f"No pending {subsystem} write with id '{target}'."
 
 
-def _diff(rest: List[str]) -> str:
+def _diff(subsystem: str, rest: List[str]) -> str:
     if not rest:
-        return "Usage: /skills diff <id>"
-    rec = wa.get_pending(wa.SKILLS, rest[0])
+        return f"Usage: /{subsystem} diff <id>"
+    rec = wa.get_pending(subsystem, rest[0])
     if not rec:
-        return f"No pending skill write with id '{rest[0]}'."
-    diff = wa.skill_pending_diff(rec)
-    header = f"# Pending skill write {rec['id']}: {rec.get('summary', '')}\n"
+        return f"No pending {subsystem} write with id '{rest[0]}'."
+    if subsystem == wa.SKILLS:
+        diff = wa.skill_pending_diff(rec)
+    else:
+        from agent.methodology_distillation import methodology_distillation_pending_diff
+        diff = methodology_distillation_pending_diff(rec)
+    header = f"# Pending {subsystem} write {rec['id']}: {rec.get('summary', '')}\n"
     return header + "\n" + diff
 
 

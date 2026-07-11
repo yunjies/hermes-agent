@@ -57,7 +57,8 @@ logger = logging.getLogger(__name__)
 # Subsystem identifiers
 MEMORY = "memory"
 SKILLS = "skills"
-_SUBSYSTEMS = (MEMORY, SKILLS)
+METHODOLOGY_DISTILLATION = "methodology_distillation"
+_SUBSYSTEMS = (MEMORY, SKILLS, METHODOLOGY_DISTILLATION)
 
 # Config key (per subsystem). A single boolean: the approval gate is OFF by
 # default (writes flow freely, the pre-gate behaviour), and ON means stage /
@@ -80,12 +81,13 @@ def write_approval_enabled(subsystem: str) -> bool:
     """
     if subsystem not in _SUBSYSTEMS:
         return False
+    default = True if subsystem == METHODOLOGY_DISTILLATION else False
     try:
         from hermes_cli.config import load_config, cfg_get
         cfg = load_config()
-        raw = cfg_get(cfg, subsystem, CONFIG_KEY, default=False)
+        raw = cfg_get(cfg, subsystem, CONFIG_KEY, default=default)
     except Exception:
-        return False
+        return default
     return _normalize_enabled(raw)
 
 

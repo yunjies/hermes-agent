@@ -236,6 +236,7 @@ def run_codex_app_server_turn(
     messages: List[Dict[str, Any]],
     effective_task_id: str,
     should_review_memory: bool = False,
+    should_capture_methodology_distillation: bool = False,
 ) -> Dict[str, Any]:
     """Codex app-server runtime path. Hands the entire turn to a `codex
     app-server` subprocess and projects its events back into Hermes'
@@ -386,6 +387,13 @@ def run_codex_app_server_turn(
             )
         except Exception:
             logger.debug("background review spawn raised", exc_info=True)
+
+    if turn.final_text and not turn.interrupted:
+        try:
+            from agent.methodology_distillation import record_methodology_distillation_signals
+            record_methodology_distillation_signals(agent, messages)
+        except Exception:
+            logger.debug("methodology distillation signal capture raised", exc_info=True)
 
     return {
         "final_response": turn.final_text,
