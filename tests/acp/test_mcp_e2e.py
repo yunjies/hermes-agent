@@ -35,8 +35,13 @@ from acp_adapter.tools import build_tool_start
 
 
 @pytest.fixture()
-def mock_manager():
-    return SessionManager(agent_factory=lambda: MagicMock(name="MockAIAgent"))
+def mock_manager(noop_session_db):
+    manager = SessionManager(
+        agent_factory=lambda: MagicMock(name="MockAIAgent"),
+        db=noop_session_db,
+    )
+    yield manager
+    manager.cleanup()
 
 
 @pytest.fixture()

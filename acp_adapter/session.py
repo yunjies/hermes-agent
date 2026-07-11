@@ -204,6 +204,7 @@ class SessionManager:
         self._lock = Lock()
         self._agent_factory = agent_factory
         self._db_instance = db  # None → lazy-init on first use
+        self._owns_db = db is None
 
     # ---- public API ---------------------------------------------------------
 
@@ -384,6 +385,15 @@ class SessionManager:
                     db.delete_session(sid)
             except Exception:
                 logger.debug("Failed to cleanup ACP sessions from DB", exc_info=True)
+            finally:
+                if self._owns_db:
+                    close = getattr(db, "close", None)
+                    if callable(close):
+                        try:
+                            close()
+                        except Exception:
+                            logger.debug("Failed to close ACP session database", exc_info=True)
+                    self._db_instance = None
 
     def save_session(self, session_id: str) -> None:
         """Persist the current state of a session to the database.
@@ -415,6 +425,7 @@ class SessionManager:
             from hermes_state import SessionDB
             hermes_home = get_hermes_home()
             self._db_instance = SessionDB(db_path=hermes_home / "state.db")
+            self._owns_db = True
             return self._db_instance
         except Exception:
             logger.debug("SessionDB unavailable for ACP persistence", exc_info=True)

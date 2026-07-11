@@ -106,7 +106,7 @@ jobs:
         # re-ran LPT independently — redundant N times.
         run: |
           source .venv/bin/activate
-          scripts/run_tests.sh --files '${{ matrix.slice.files }}'
+          scripts/run_tests.sh --file-timeout 600 --files '${{ matrix.slice.files }}'
         env:
           # Ensure tests don't accidentally call real APIs
           OPENROUTER_API_KEY: ""
