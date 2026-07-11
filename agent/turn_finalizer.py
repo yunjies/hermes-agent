@@ -41,7 +41,7 @@ def finalize_turn(
     user_message,
     original_user_message,
     _should_review_memory,
-    _should_capture_methodology_distillation,
+    _should_capture_methodology_distillation=False,
     _turn_exit_reason,
     _pending_verification_response=None,
 ):
