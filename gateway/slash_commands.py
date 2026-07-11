@@ -2584,6 +2584,18 @@ class GatewaySlashCommandsMixin:
                      f"~/.hermes/pending/methodology_distillation/{pending_id}.json)")
         return out
 
+    async def _handle_approval_command(self, event: MessageEvent) -> str:
+        """Handle /approval on gateway surfaces.
+
+        This is distinct from /approve, which remains the dangerous-command
+        unblock path.
+        """
+        from hermes_cli.approval_service_commands import handle_approval_command
+
+        raw_args = event.get_command_args().strip()
+        args = raw_args.split() if raw_args else []
+        return handle_approval_command(args)
+
     async def _handle_fast_command(self, event: MessageEvent) -> str:
         """Handle /fast — mirror the CLI Priority Processing toggle in gateway chats."""
         from gateway.run import _hermes_home, _load_gateway_config, _resolve_gateway_model

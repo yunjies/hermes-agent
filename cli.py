@@ -8352,6 +8352,11 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             self._handle_learn_command(cmd_original)
         elif canonical == "memory":
             self._handle_memory_command(cmd_original)
+        elif canonical == "approval":
+            from hermes_cli.approval_service_commands import handle_approval_command
+            parts = cmd_original.strip().split()
+            args = parts[1:] if len(parts) > 1 else []
+            print(handle_approval_command(args))
         elif canonical == "platforms":
             self._show_gateway_status()
         elif canonical == "status":

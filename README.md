@@ -152,6 +152,7 @@ Hermes has two entry points: start the terminal UI with `hermes`, or run the gat
 | Retry or undo the last turn    | `/retry`, `/undo`                             | `/retry`, `/undo`                                                                |
 | Compress context / check usage | `/compress`, `/usage`, `/insights [--days N]` | `/compress`, `/usage`, `/insights [days]`                                        |
 | Browse skills                  | `/skills` or `/<skill-name>`                  | `/<skill-name>`                                                                  |
+| Inspect approval requests      | `/approval list`, `/approval show <id>`       | `/approval list`, `/approval show <id>`                                          |
 | Interrupt current work         | `Ctrl+C` or send a new message                | `/stop` or send a new message                                                    |
 | Platform-specific status       | `/platforms`                                  | `/status`, `/sethome`                                                            |
 
@@ -180,6 +181,25 @@ All documentation lives at **[hermes-agent.nousresearch.com/docs](https://hermes
 | [Contributing](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing)             | Development setup, PR process, code style                  |
 | [CLI Reference](https://hermes-agent.nousresearch.com/docs/reference/cli-commands)                  | All commands and flags                                     |
 | [Environment Variables](https://hermes-agent.nousresearch.com/docs/reference/environment-variables) | Complete env var reference                                 |
+
+---
+
+## Approval Service
+
+Hermes includes a runtime Approval Service for producer-backed approval
+requests. It records structured request, decision, audit, preflight, and
+callback-result data while leaving artifact apply logic with the producer.
+
+Use `/approval list` and `/approval show <request_id>` in the CLI or gateway to
+inspect requests. Write-approval flows such as `/memory approve <id>` and
+`/skills approve <id>` record Approval Service audit data while preserving their
+existing producer-owned apply behavior. Dashboard integrations can use
+`/api/approval` and `/api/approval/{request_id}`.
+
+Set `HERMES_APPROVAL_SERVICE_MODE=disabled|shadow|enforce` to control rollout:
+`shadow` records request/audit data without blocking legacy paths, while
+`enforce` requires an approved request plus passing preflight for integrated
+producers. See `docs/design/approval-service.md` for the engineering spec.
 
 ---
 

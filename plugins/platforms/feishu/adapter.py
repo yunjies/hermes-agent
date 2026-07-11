@@ -2635,15 +2635,25 @@ class FeishuAdapter(BasePlatformAdapter):
         future.add_done_callback(self._log_background_failure)
         return True
 
-    def _is_interactive_operator_authorized(self, open_id: str) -> bool:
-        """Return whether this card-action operator may answer gated prompts."""
-        normalized = str(open_id or "").strip()
-        if not normalized:
-            return False
-        allowed_ids = set(self._admins) | set(self._allowed_group_users)
-        if not allowed_ids:
-            return True
-        return "*" in allowed_ids or normalized in allowed_ids
+    def _is_interactive_operator_authorized(
+        self,
+        open_id: str,
+        *,
+        user_id: str = "",
+        chat_id: str = "",
+    ) -> bool:
+        """Return whether this card-action operator may answer gated prompts.
+
+        Keep button approval authorization aligned with the normal Feishu
+        message gate. The first card callback path already uses
+        ``_allow_group_message``; this helper covers the async resolver path and
+        must accept either open_id or user_id according to the same group rule.
+        """
+        sender_id = SimpleNamespace(
+            open_id=str(open_id or "").strip(),
+            user_id=str(user_id or "").strip(),
+        )
+        return self._allow_group_message(sender_id, chat_id, is_bot=False)
 
     def _handle_approval_card_action(self, *, event: Any, action_value: Dict[str, Any], loop: Any) -> Any:
         """Schedule approval resolution and build the synchronous callback response."""
@@ -2659,7 +2669,8 @@ class FeishuAdapter(BasePlatformAdapter):
 
         operator = getattr(event, "operator", None)
         open_id = str(getattr(operator, "open_id", "") or "")
-        sender_id = SimpleNamespace(open_id=open_id, user_id=str(getattr(operator, "user_id", "") or ""))
+        user_id = str(getattr(operator, "user_id", "") or "")
+        sender_id = SimpleNamespace(open_id=open_id, user_id=user_id)
         if not self._allow_group_message(sender_id, state.get("chat_id", ""), is_bot=False):
             logger.warning("[Feishu] Unauthorized approval click by %s", open_id or "<unknown>")
             return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
@@ -2686,6 +2697,7 @@ class FeishuAdapter(BasePlatformAdapter):
                 choice=choice,
                 user_name=user_name,
                 open_id=open_id,
+                user_id=user_id,
                 chat_id=chat_id,
             ),
         ):
@@ -2765,6 +2777,7 @@ class FeishuAdapter(BasePlatformAdapter):
         user_name: str,
         *,
         open_id: str = "",
+        user_id: str = "",
         chat_id: str = "",
     ) -> None:
         """Pop approval state and unblock the waiting agent thread."""
@@ -2772,7 +2785,7 @@ class FeishuAdapter(BasePlatformAdapter):
         if not state:
             logger.debug("[Feishu] Approval %s already resolved or unknown", approval_id)
             return
-        if not self._is_interactive_operator_authorized(open_id):
+        if not self._is_interactive_operator_authorized(open_id, user_id=user_id, chat_id=chat_id):
             logger.warning("[Feishu] Unauthorized approval click by %s for approval %s", open_id or "<unknown>", approval_id)
             return
         expected_chat_id = str(state.get("chat_id", "") or "")

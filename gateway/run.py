@@ -8898,6 +8898,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if canonical == "bundles":
             return await self._handle_bundles_command(event)
 
+        if canonical == "approval":
+            return await self._handle_approval_command(event)
+
         if canonical == "approve":
             return await self._handle_approve_command(event)
 
