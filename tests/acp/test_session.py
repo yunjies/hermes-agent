@@ -12,15 +12,23 @@ from acp_adapter import session as acp_session
 from acp_adapter.session import SessionManager, SessionState
 from hermes_state import SessionDB
 
-
 def _mock_agent():
     return MagicMock(name="MockAIAgent")
 
 
+@pytest.fixture(scope="module")
+def session_db(tmp_path_factory):
+    db = SessionDB(tmp_path_factory.mktemp("acp-session") / "state.db")
+    yield db
+    db.close()
+
+
 @pytest.fixture()
-def manager():
-    """SessionManager with a mock agent factory (avoids needing API keys)."""
-    return SessionManager(agent_factory=_mock_agent)
+def manager(session_db):
+    """SessionManager with a mock agent factory and shared test DB."""
+    manager = SessionManager(agent_factory=_mock_agent, db=session_db)
+    yield manager
+    manager.cleanup()
 
 
 # ---------------------------------------------------------------------------

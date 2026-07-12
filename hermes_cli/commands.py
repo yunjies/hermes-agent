@@ -183,6 +183,16 @@ COMMAND_REGISTRY: list[CommandDef] = [
                "Tools & Skills",
                args_hint="[pending|approve|reject|approval] [id|on|off]",
                subcommands=("pending", "approve", "reject", "approval")),
+    CommandDef("distill", "Review methodology proposals / toggle the approval gate",
+               "Tools & Skills",
+               gateway_config_gate="methodology_distillation.write_approval",
+               aliases=("methodology", "methodology-distillation"),
+               args_hint="[history|pending|approve|reject|diff|approval] [options]",
+               subcommands=("history", "pending", "approve", "reject", "diff", "approval")),
+    CommandDef("approval", "Inspect and decide Approval Service requests",
+               "Tools & Skills",
+               args_hint="[list|show|approve|reject|revoke|examples]",
+               subcommands=("list", "show", "status", "approve", "reject", "revoke", "expire", "examples", "mode")),
     CommandDef("bundles", "List skill bundles (aliases /<name> for multiple skills)",
                "Tools & Skills"),
     CommandDef("pet", "Toggle or adopt a petdex mascot (/pet, /pet list, /pet <slug>)", "Tools & Skills",
@@ -1163,7 +1173,7 @@ _SLACK_PRIORITY_ALIASES = ("btw", "bg")
 #   - moa: high-cost slash mode, available through /hermes moa to avoid
 #     displacing existing native Slack slash commands at the 50-command cap.
 #   - debug: the log/report upload surface; reached via /hermes debug on Slack.
-_SLACK_VIA_HERMES_ONLY = frozenset({"credits", "billing", "moa", "debug"})
+_SLACK_VIA_HERMES_ONLY = frozenset({"credits", "billing", "moa", "debug", "update", "version"})
 
 
 def _sanitize_slack_name(raw: str) -> str:

@@ -110,6 +110,8 @@ class TurnContext:
     current_turn_user_idx: int
     # Whether the post-turn memory review should fire.
     should_review_memory: bool = False
+    # Whether the post-turn methodology distillation cadence is due.
+    should_capture_methodology_distillation: bool = False
     # Context contributed by ``pre_llm_call`` plugins (appended to user message).
     plugin_user_context: str = ""
     # External-memory prefetch result, reused across loop iterations.
@@ -284,6 +286,11 @@ def build_turn_context(
             agent._user_turn_count = prior_user_turns
             if agent._memory_nudge_interval > 0 and agent._turns_since_memory == 0:
                 agent._turns_since_memory = prior_user_turns % agent._memory_nudge_interval
+            if (
+                getattr(agent, "_methodology_distillation_interval", 0) > 0
+                and getattr(agent, "_turns_since_methodology_distillation", 0) == 0
+            ):
+                agent._turns_since_methodology_distillation = prior_user_turns % agent._methodology_distillation_interval
 
     # Track user turns for memory flush and periodic nudge logic.
     agent._user_turn_count += 1
@@ -312,6 +319,13 @@ def build_turn_context(
         if agent._turns_since_memory >= agent._memory_nudge_interval:
             should_review_memory = True
             agent._turns_since_memory = 0
+
+    should_capture_methodology_distillation = False
+    if getattr(agent, "_methodology_distillation_interval", 0) > 0:
+        agent._turns_since_methodology_distillation = getattr(agent, "_turns_since_methodology_distillation", 0) + 1
+        if agent._turns_since_methodology_distillation >= agent._methodology_distillation_interval:
+            should_capture_methodology_distillation = True
+            agent._turns_since_methodology_distillation = 0
 
     # Add user message.
     user_msg = {"role": "user", "content": user_message}
@@ -574,6 +588,7 @@ def build_turn_context(
         turn_id=turn_id,
         current_turn_user_idx=current_turn_user_idx,
         should_review_memory=should_review_memory,
+        should_capture_methodology_distillation=should_capture_methodology_distillation,
         plugin_user_context=plugin_user_context,
         ext_prefetch_cache=ext_prefetch_cache,
     )

@@ -1400,6 +1400,17 @@ _PORT_BINDING_PLATFORM_VALUES = frozenset({
 })
 
 
+def _secondary_platform_requires_default_listener(platform, platform_config) -> bool:
+    """Return True when a secondary profile adapter would bind local ports."""
+    if platform.value not in _PORT_BINDING_PLATFORM_VALUES:
+        return False
+    if platform.value == "feishu":
+        extra = getattr(platform_config, "extra", None) or {}
+        connection_mode = str(extra.get("connection_mode") or "websocket").strip().lower()
+        return connection_mode != "websocket"
+    return True
+
+
 class MultiplexConfigError(RuntimeError):
     """A profile multiplexer config is invalid (fail-fast at startup).
 
@@ -8567,7 +8578,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # default profile's listener already serves every profile via the
             # /p/<profile>/ prefix, so a second bind can only collide. This is a
             # config error, not a transient failure — fail fast and loud.
-            if platform.value in _PORT_BINDING_PLATFORM_VALUES:
+            if _secondary_platform_requires_default_listener(platform, platform_config):
                 raise MultiplexConfigError(
                     f"Profile '{profile_name}' enables the port-binding platform "
                     f"'{platform.value}', but gateway.multiplex_profiles is on. The "
@@ -9710,9 +9721,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 return self._telegram_topic_root_new_message()
             async def _do_reset():
                 return await self._handle_reset_command(event)
+            raw_command = (command or "new").strip().lower().lstrip("/")
             return await self._maybe_confirm_destructive_slash(
                 event=event,
-                command="new",
+                command=raw_command if raw_command in {"new", "reset"} else "new",
                 title="/new",
                 detail=(
                     "This starts a fresh session and discards the current "
@@ -9760,6 +9772,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         if canonical == "memory":
             return await self._handle_memory_command(event)
+
+        if canonical == "distill":
+            return await self._handle_methodology_distillation_command(event)
 
         if canonical == "skills":
             return await self._handle_skills_command(event)
@@ -9896,6 +9911,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         if canonical == "bundles":
             return await self._handle_bundles_command(event)
+
+        if canonical == "approval":
+            return await self._handle_approval_command(event)
 
         if canonical == "approve":
             return await self._handle_approve_command(event)
@@ -14217,6 +14235,23 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             approvals = cfg.get("approvals") if isinstance(cfg, dict) else None
             if isinstance(approvals, dict):
                 confirm_required = bool(approvals.get("destructive_slash_confirm", True))
+                exempt_raw = approvals.get("destructive_slash_confirm_exempt_commands", [])
+                if isinstance(exempt_raw, str):
+                    exempt_commands = {
+                        item.strip().lower().lstrip("/")
+                        for item in re.split(r"[\s,;]+", exempt_raw)
+                        if item.strip()
+                    }
+                elif isinstance(exempt_raw, (list, tuple, set)):
+                    exempt_commands = {
+                        str(item).strip().lower().lstrip("/")
+                        for item in exempt_raw
+                        if str(item).strip()
+                    }
+                else:
+                    exempt_commands = set()
+                if command.strip().lower().lstrip("/") in exempt_commands:
+                    confirm_required = False
         except Exception:
             pass
 

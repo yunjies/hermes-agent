@@ -41,6 +41,7 @@ def finalize_turn(
     user_message,
     original_user_message,
     _should_review_memory,
+    _should_capture_methodology_distillation=False,
     _turn_exit_reason,
     _pending_verification_response=None,
 ):
@@ -483,6 +484,13 @@ def finalize_turn(
             and "skill_manage" in agent.valid_tool_names):
         _should_review_skills = True
         agent._iters_since_skill = 0
+
+    if final_response and not interrupted:
+        try:
+            from agent.methodology_distillation import record_methodology_distillation_signals
+            record_methodology_distillation_signals(agent, messages)
+        except Exception:
+            pass
 
     # External memory provider: sync the completed turn + queue next prefetch.
     agent._sync_external_memory_for_turn(

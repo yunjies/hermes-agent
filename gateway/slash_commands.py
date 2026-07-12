@@ -2859,6 +2859,67 @@ class GatewaySlashCommandsMixin:
                      f"~/.hermes/pending/skills/{pending_id}.json)")
         return out
 
+    async def _handle_methodology_distillation_command(self, event: MessageEvent) -> str:
+        """Handle /distill - review methodology context."""
+        from gateway.run import _hermes_home
+        from hermes_cli.write_approval_commands import handle_pending_subcommand
+        from tools import write_approval as wa
+
+        raw_args = event.get_command_args().strip()
+        args = raw_args.split() if raw_args else []
+        session_key = self._session_key_for_source(event.source)
+        config_path = _hermes_home / "config.yaml"
+
+        if args and args[0].lower() == "history":
+            from agent.methodology_distillation import run_history_distillation_from_args
+            return run_history_distillation_from_args(args[1:])
+
+        gate_on = wa.write_approval_enabled(wa.METHODOLOGY_DISTILLATION)
+        wants_toggle = bool(args) and args[0].lower() in {"approval", "mode"}
+        if not gate_on and not wants_toggle and wa.pending_count(wa.METHODOLOGY_DISTILLATION) == 0:
+            return ("Methodology distillation write approval is off (methodology_distillation.write_approval). "
+                    "Enable it with /distill approval on, then review staged "
+                    "proposals here with /distill pending.")
+
+        def _set_approval(enabled: bool):
+            import yaml
+            user_config = {}
+            if config_path.exists():
+                with open(config_path, encoding="utf-8") as f:
+                    user_config = yaml.safe_load(f) or {}
+            user_config.setdefault("methodology_distillation", {})["write_approval"] = bool(enabled)
+            atomic_yaml_write(config_path, user_config)
+            self._evict_cached_agent(session_key)
+
+        out = handle_pending_subcommand(
+            wa.METHODOLOGY_DISTILLATION, args, set_mode_fn=_set_approval,
+        )
+        if out is None:
+            return ("Unknown /distill subcommand. Use: pending, approve <id>, "
+                    "reject <id>, diff <id>, approval <on|off>.")
+
+        if args and args[0].lower() in {"approve", "apply"}:
+            self._evict_cached_agent(session_key)
+
+        if args and args[0].lower() == "diff" and len(out) > 3000:
+            pending_id = args[1] if len(args) > 1 else "<id>"
+            out = (out[:3000]
+                   + "\n… (truncated — full proposal in "
+                     f"~/.hermes/pending/methodology_distillation/{pending_id}.json)")
+        return out
+
+    async def _handle_approval_command(self, event: MessageEvent) -> str:
+        """Handle /approval on gateway surfaces.
+
+        This is distinct from /approve, which remains the dangerous-command
+        unblock path.
+        """
+        from hermes_cli.approval_service_commands import handle_approval_command
+
+        raw_args = event.get_command_args().strip()
+        args = raw_args.split() if raw_args else []
+        return handle_approval_command(args)
+
     async def _handle_fast_command(self, event: MessageEvent) -> str:
         """Handle /fast — mirror the CLI Priority Processing toggle in gateway chats."""
         from gateway.run import _hermes_home, _load_gateway_config, _resolve_gateway_model

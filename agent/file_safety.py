@@ -29,32 +29,43 @@ def build_write_denied_paths(home: str) -> set[str]:
     """Return exact sensitive paths that must never be written."""
     hermes_home = _hermes_home_path()
     hermes_root = _hermes_root_path()
-    return {
-        os.path.realpath(p)
-        for p in [
-            os.path.join(home, ".ssh", "authorized_keys"),
-            os.path.join(home, ".ssh", "id_rsa"),
-            os.path.join(home, ".ssh", "id_ed25519"),
-            os.path.join(home, ".ssh", "config"),
-            # Active profile .env (or top-level .env when not in profile mode).
-            str(hermes_home / ".env"),
+    paths = [
+        os.path.join(home, ".ssh", "authorized_keys"),
+        os.path.join(home, ".ssh", "id_rsa"),
+        os.path.join(home, ".ssh", "id_ed25519"),
+        os.path.join(home, ".ssh", "config"),
             # Top-level .env, even when running under a profile — overwriting it
             # leaks credentials across every profile that inherits from root (#15981).
-            str(hermes_root / ".env"),
+        str(hermes_root / ".env"),
             # Active profile Anthropic PKCE credential store.
-            str(hermes_home / ".anthropic_oauth.json"),
+        str(hermes_home / ".anthropic_oauth.json"),
             # Top-level Anthropic PKCE credential store remains sensitive even
             # when a profile is active; default/non-profile sessions still read it.
-            str(hermes_root / ".anthropic_oauth.json"),
-            os.path.join(home, ".netrc"),
-            os.path.join(home, ".pgpass"),
-            os.path.join(home, ".npmrc"),
-            os.path.join(home, ".pypirc"),
-            os.path.join(home, ".git-credentials"),
-            "/etc/sudoers",
-            "/etc/passwd",
-            "/etc/shadow",
-        ]
+        str(hermes_root / ".anthropic_oauth.json"),
+        os.path.join(home, ".netrc"),
+        os.path.join(home, ".pgpass"),
+        os.path.join(home, ".npmrc"),
+        os.path.join(home, ".pypirc"),
+        os.path.join(home, ".git-credentials"),
+        "/etc/sudoers",
+        "/etc/passwd",
+        "/etc/shadow",
+    ]
+
+    try:
+        hermes_home_real = hermes_home.resolve()
+        hermes_root_real = hermes_root.resolve()
+    except Exception:
+        hermes_home_real = hermes_home
+        hermes_root_real = hermes_root
+
+    if hermes_home_real == hermes_root_real:
+        # Default/non-profile sessions must not mutate the shared root .env.
+        paths.append(str(hermes_home / ".env"))
+
+    return {
+        os.path.realpath(p)
+        for p in paths
     }
 
 
@@ -354,6 +365,7 @@ def raise_if_read_blocked(path: str) -> None:
 # that should be guarded. Adding a new area here extends the guard with no
 # other code change.
 PROFILE_SCOPED_AREAS = ("skills", "plugins", "cron", "memories")
+PROFILE_SCOPED_FILES = (".env",)
 
 
 def _resolve_active_profile_name() -> str:
@@ -416,14 +428,20 @@ def classify_cross_profile_target(path: str) -> Optional[dict]:
     if not parts:
         return None
 
-    if parts[0] in PROFILE_SCOPED_AREAS:
+    if parts[0] in PROFILE_SCOPED_FILES and len(parts) == 1:
+        target_profile = "default"
+        area = parts[0]
+    elif parts[0] in PROFILE_SCOPED_AREAS:
         # ``<root>/<area>/...`` → default profile.
         target_profile = "default"
         area = parts[0]
     elif (
         parts[0] == "profiles"
         and len(parts) >= 3
-        and parts[2] in PROFILE_SCOPED_AREAS
+        and (
+            parts[2] in PROFILE_SCOPED_AREAS
+            or (parts[2] in PROFILE_SCOPED_FILES and len(parts) == 3)
+        )
     ):
         # ``<root>/profiles/<name>/<area>/...`` → named profile.
         target_profile = parts[1]

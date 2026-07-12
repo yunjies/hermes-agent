@@ -140,6 +140,54 @@ class TestPortBindingHardError:
         assert connected == 0  # nothing connected, but no MultiplexConfigError
 
     @pytest.mark.asyncio
+    async def test_secondary_feishu_webhook_raises(self, monkeypatch):
+        from gateway.run import MultiplexConfigError
+        from gateway.config import GatewayConfig, Platform, PlatformConfig
+
+        runner = GatewayRunner.__new__(GatewayRunner)
+        runner.config = GatewayConfig(multiplex_profiles=True)
+        runner._profile_adapters = {}
+
+        reviewer_cfg = GatewayConfig(multiplex_profiles=True)
+        reviewer_cfg.platforms = {
+            Platform.FEISHU: PlatformConfig(
+                enabled=True,
+                extra={"connection_mode": "webhook"},
+            ),
+        }
+        monkeypatch.setattr(
+            "gateway.config.load_gateway_config", lambda: reviewer_cfg
+        )
+
+        with pytest.raises(MultiplexConfigError) as ei:
+            await runner._start_one_profile_adapters("reviewer", "/tmp/x", {})
+        assert "feishu" in str(ei.value)
+        assert "reviewer" in str(ei.value)
+
+    @pytest.mark.asyncio
+    async def test_secondary_feishu_websocket_ok(self, monkeypatch):
+        from gateway.config import GatewayConfig, Platform, PlatformConfig
+
+        runner = GatewayRunner.__new__(GatewayRunner)
+        runner.config = GatewayConfig(multiplex_profiles=True)
+        runner._profile_adapters = {}
+
+        reviewer_cfg = GatewayConfig(multiplex_profiles=True)
+        reviewer_cfg.platforms = {
+            Platform.FEISHU: PlatformConfig(
+                enabled=True,
+                extra={"connection_mode": "websocket"},
+            ),
+        }
+        monkeypatch.setattr(
+            "gateway.config.load_gateway_config", lambda: reviewer_cfg
+        )
+        monkeypatch.setattr(runner, "_create_adapter", lambda p, c: None)
+
+        connected = await runner._start_one_profile_adapters("reviewer", "/tmp/x", {})
+        assert connected == 0
+
+    @pytest.mark.asyncio
     async def test_secondary_same_config_token_is_refused(self, monkeypatch):
         """Adapters that keep their token on config still trip the mux guard."""
         from gateway.config import GatewayConfig, Platform, PlatformConfig

@@ -859,6 +859,10 @@ class MemoryProviderSetupRequest(BaseModel):
     values: Dict[str, Any] = {}
 
 
+class ApprovalDecisionBody(BaseModel):
+    reason: str = ""
+
+
 class MessagingPlatformUpdate(BaseModel):
     enabled: Optional[bool] = None
     env: Dict[str, str] = {}
@@ -2874,6 +2878,77 @@ async def get_system_stats():
             pass
 
     return info
+
+
+@app.get("/api/approval")
+async def list_approval_requests(status: Optional[str] = None):
+    from tools import approval_service as approval_svc
+
+    return {
+        "mode": approval_svc.current_mode(),
+        "requests": approval_svc.list_requests(status),
+    }
+
+
+@app.get("/api/approval/examples")
+async def list_approval_examples():
+    from tools import approval_service as approval_svc
+
+    return {"examples": approval_svc.list_decision_examples()}
+
+
+@app.get("/api/approval/{request_id}")
+async def get_approval_request(request_id: str):
+    from tools import approval_service as approval_svc
+
+    req = approval_svc.get_request(request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail="approval request not found")
+    return req
+
+
+@app.post("/api/approval/{request_id}/approve")
+async def approve_approval_request(request_id: str, body: ApprovalDecisionBody):
+    from tools import approval_service as approval_svc
+
+    try:
+        return approval_svc.decide_request(
+            request_id,
+            "approved",
+            reason=body.reason,
+            actor_type="user",
+            actor_id="dashboard",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/approval/{request_id}/reject")
+async def reject_approval_request(request_id: str, body: ApprovalDecisionBody):
+    from tools import approval_service as approval_svc
+
+    try:
+        return approval_svc.decide_request(
+            request_id,
+            "rejected",
+            reason=body.reason,
+            actor_type="user",
+            actor_id="dashboard",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/approval/{request_id}/revoke")
+async def revoke_approval_request(request_id: str, body: ApprovalDecisionBody):
+    from tools import approval_service as approval_svc
+
+    try:
+        return approval_svc.revoke_request(request_id, reason=body.reason, actor_type="user", actor_id="dashboard")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 
 
 # ---------------------------------------------------------------------------

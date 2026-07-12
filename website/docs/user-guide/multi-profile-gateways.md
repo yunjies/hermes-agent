@@ -151,9 +151,11 @@ gateway.multiplex_profiles is on. ... Remove platforms.webhook from profile
 ```
 
 Port-binding platforms covered by this rule: `webhook`, `api_server`,
-`msgraph_webhook`, `feishu`, `wecom_callback`, `bluebubbles`, `sms`. Configure
-any of these **only on the default profile**; every profile is reachable through
-its `/p/<profile>/` prefix.
+`msgraph_webhook`, `feishu` in webhook mode, `wecom_callback`, `bluebubbles`,
+`sms`. Configure these **only on the default profile**; every profile is
+reachable through its `/p/<profile>/` prefix. Feishu profiles using
+`connection_mode: websocket` may run as secondary profile adapters because they
+do not bind a local HTTP listener.
 
 #### 3. Per-credential platforms still need their own token per profile
 

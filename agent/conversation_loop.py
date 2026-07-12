@@ -599,6 +599,7 @@ def run_conversation(
     turn_id = _ctx.turn_id
     current_turn_user_idx = _ctx.current_turn_user_idx
     _should_review_memory = _ctx.should_review_memory
+    _should_capture_methodology_distillation = _ctx.should_capture_methodology_distillation
     _plugin_user_context = _ctx.plugin_user_context
     _ext_prefetch_cache = _ctx.ext_prefetch_cache
 
@@ -638,6 +639,7 @@ def run_conversation(
             messages=messages,
             effective_task_id=effective_task_id,
             should_review_memory=_should_review_memory,
+            should_capture_methodology_distillation=_should_capture_methodology_distillation,
         )
 
     while (api_call_count < agent.max_iterations and agent.iteration_budget.remaining > 0) or agent._budget_grace_call:
@@ -5346,6 +5348,7 @@ def run_conversation(
         user_message=user_message,
         original_user_message=original_user_message,
         _should_review_memory=_should_review_memory,
+        _should_capture_methodology_distillation=_should_capture_methodology_distillation,
         _turn_exit_reason=_turn_exit_reason,
         _pending_verification_response=_pending_verification_response,
     )

@@ -19,6 +19,7 @@ import json
 from typing import List, Optional
 
 from tools import write_approval as wa
+from tools import approval_service as approval_svc
 
 
 def _fmt_state(subsystem: str) -> str:
@@ -44,6 +45,8 @@ def _fmt_pending_list(subsystem: str) -> str:
     lines.append(f"Apply: {where}   Reject: /{subsystem} reject <id>")
     if subsystem == wa.SKILLS:
         lines.append("Review full diff: /skills diff <id>")
+    if subsystem == wa.METHODOLOGY_DISTILLATION:
+        lines.append("Review proposal: /distill diff <id>")
     return "\n".join(lines)
 
 
@@ -90,8 +93,8 @@ def handle_pending_subcommand(
     if sub in {"reject", "deny", "drop"}:
         return _reject(subsystem, rest)
 
-    if sub == "diff" and subsystem == wa.SKILLS:
-        return _diff(rest)
+    if sub == "diff" and subsystem in {wa.SKILLS, wa.METHODOLOGY_DISTILLATION}:
+        return _diff(subsystem, rest)
 
     if sub in {"approval", "mode"}:  # 'mode' kept as a back-compat alias
         return _set_approval(subsystem, rest, set_mode_fn)
@@ -139,6 +142,31 @@ def _approve(subsystem: str, rest: List[str], memory_store) -> str:
 
 
 def _apply_one(subsystem: str, rec, memory_store):
+    approval_req = None
+    approval_mode = approval_svc.current_mode()
+    if approval_mode != "disabled":
+        try:
+            approval_req = approval_svc.request_for_write_pending(subsystem, rec)
+            if approval_req.get("status") != "approved":
+                approval_req = approval_svc.decide_request(
+                    approval_req["id"],
+                    "approved",
+                    reason=f"Approved pending {subsystem} write {rec.get('id')}.",
+                    actor_type="user",
+                    actor_id="user",
+                )
+            preflight = approval_svc.preflight(
+                approval_req["id"],
+                artifact_hash=approval_req.get("target", {}).get("artifact_hash", ""),
+                producer="write_approval",
+                executor="write_approval",
+            )
+            if preflight.get("result") != "pass" and approval_mode == "enforce":
+                return False, f"approval preflight failed: {preflight.get('reason')}"
+        except Exception as exc:
+            if approval_mode == "enforce":
+                return False, f"approval service failed: {exc}"
+
     payload = rec.get("payload", {})
     try:
         if subsystem == wa.MEMORY:
@@ -146,12 +174,44 @@ def _apply_one(subsystem: str, rec, memory_store):
                 return False, "memory store unavailable"
             from tools.memory_tool import apply_memory_pending
             result = apply_memory_pending(payload, memory_store)
-            return bool(result.get("success")), result.get("error", "")
-        else:
+            ok = bool(result.get("success"))
+            msg = result.get("error", "")
+        elif subsystem == wa.SKILLS:
             from tools.skill_manager_tool import apply_skill_pending
             result = json.loads(apply_skill_pending(payload))
-            return bool(result.get("success")), result.get("error", "")
+            ok = bool(result.get("success"))
+            msg = result.get("error", "")
+        elif subsystem == wa.METHODOLOGY_DISTILLATION:
+            from agent.methodology_distillation import apply_methodology_distillation_pending
+            result = apply_methodology_distillation_pending(payload)
+            ok = bool(result.get("success"))
+            msg = result.get("error", "")
+        else:
+            return False, f"unknown subsystem: {subsystem}"
+        if approval_req is not None:
+            try:
+                approval_svc.record_callback_result(
+                    approval_req["id"],
+                    result="applied" if ok else "apply_failed",
+                    reason=msg or "",
+                    applied_ref=f"pending/{subsystem}/{rec.get('id')}",
+                    producer="write_approval",
+                )
+            except Exception:
+                pass
+        return ok, msg
     except Exception as e:
+        if approval_req is not None:
+            try:
+                approval_svc.record_callback_result(
+                    approval_req["id"],
+                    result="apply_failed",
+                    reason=str(e),
+                    applied_ref=f"pending/{subsystem}/{rec.get('id')}",
+                    producer="write_approval",
+                )
+            except Exception:
+                pass
         return False, str(e)
 
 
@@ -162,22 +222,59 @@ def _reject(subsystem: str, rest: List[str]) -> str:
     if target.lower() == "all":
         n = 0
         for rec in wa.list_pending(subsystem):
+            if subsystem == wa.METHODOLOGY_DISTILLATION:
+                try:
+                    from agent.methodology_distillation import reject_methodology_distillation_pending
+                    reject_methodology_distillation_pending(rec)
+                except Exception:
+                    pass
+            _record_rejection(subsystem, rec)
             if wa.discard_pending(subsystem, rec["id"]):
                 n += 1
         return f"Rejected {n} pending {subsystem} write(s)."
+    rec = wa.get_pending(subsystem, target)
+    if rec:
+        if subsystem == wa.METHODOLOGY_DISTILLATION:
+            try:
+                from agent.methodology_distillation import reject_methodology_distillation_pending
+                reject_methodology_distillation_pending(rec)
+            except Exception:
+                pass
+        _record_rejection(subsystem, rec)
     if wa.discard_pending(subsystem, target):
         return f"Rejected pending {subsystem} write '{target}'."
     return f"No pending {subsystem} write with id '{target}'."
 
 
-def _diff(rest: List[str]) -> str:
+def _record_rejection(subsystem: str, rec) -> None:
+    if approval_svc.current_mode() == "disabled":
+        return
+    try:
+        req = approval_svc.request_for_write_pending(subsystem, rec)
+        if req.get("status") not in {"rejected", "expired", "revoked"}:
+            approval_svc.decide_request(
+                req["id"],
+                "rejected",
+                reason=f"Rejected pending {subsystem} write {rec.get('id')}.",
+                actor_type="user",
+                actor_id="user",
+            )
+    except Exception:
+        pass
+
+
+def _diff(subsystem: str, rest: List[str]) -> str:
     if not rest:
-        return "Usage: /skills diff <id>"
-    rec = wa.get_pending(wa.SKILLS, rest[0])
+        return f"Usage: /{subsystem} diff <id>"
+    rec = wa.get_pending(subsystem, rest[0])
     if not rec:
-        return f"No pending skill write with id '{rest[0]}'."
-    diff = wa.skill_pending_diff(rec)
-    header = f"# Pending skill write {rec['id']}: {rec.get('summary', '')}\n"
+        return f"No pending {subsystem} write with id '{rest[0]}'."
+    if subsystem == wa.SKILLS:
+        diff = wa.skill_pending_diff(rec)
+    else:
+        from agent.methodology_distillation import methodology_distillation_pending_diff
+        diff = methodology_distillation_pending_diff(rec)
+    header = f"# Pending {subsystem} write {rec['id']}: {rec.get('summary', '')}\n"
     return header + "\n" + diff
 
 
