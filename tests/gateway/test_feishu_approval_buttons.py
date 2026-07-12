@@ -51,6 +51,7 @@ def _make_adapter() -> FeishuAdapter:
     config = PlatformConfig(enabled=True)
     adapter = FeishuAdapter(config)
     adapter._client = MagicMock()
+    adapter._allowed_group_users = {"ou_user1"}
     return adapter
 
 

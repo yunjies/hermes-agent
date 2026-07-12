@@ -545,6 +545,8 @@ def _ensure_profile_skill_external_dirs(profile_dir: Path) -> None:
     pool used for profile delegation/routing.
     """
     config_path = profile_dir / "config.yaml"
+    if not config_path.exists():
+        return
     shared_skills = profile_dir.parent.parent / "shared-skills"
     desired = [str(profile_dir / "skills")]
     if shared_skills.is_dir():
